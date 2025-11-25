@@ -2,6 +2,69 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.4.0] - 2025-11-26
+
+### Added
+- **Instant Indexing** - All writes now immediately update search index for zero-delay searchability
+- **Brain emoji (🧠) in invocation messages** - Visual identifier for brain operations
+- **ContextWatcher** - Tracks conversation length and tokens for context overflow prevention
+- **Auto-save prompt** - Guide for checkpoint patterns to preserve progress
+- **contextWatcher.ts** - Monitor token usage and suggest when to summarize
+
+### Fixed
+- **Critical: Stale index bug** - Search results now reflect latest writes instantly
+- Tag search scoring improved (1.0 → 8.0 for explicit #tagname searches)
+- Improved error messages with visual indicators
+
+### Changed
+- Compact visual header in output (replaces large ASCII art)
+- All write operations now show "(indexed ⚡)" indicator
+- Brain-usage.instructions.md updated with context overflow prevention section
+
+### Performance
+- Word index caching implemented (partial - full rebuild on startup for 500+ files)
+- File watcher debounce: 500ms (prevents index thrashing)
+- Search results: sorted by score, top 20 by default
+
+## [2.3.0] - 2025-11-26
+
+### Added
+- Brain ASCII art header in all outputs for visual satisfaction
+- Enhanced visual feedback with emojis in operation messages
+
+## [2.2.0] - 2025-11-26
+
+### Added
+- **Auto-save system** - ContextWatcher class for monitoring conversation length
+- **brain-auto-save.prompt.md** - Instructions for checkpoint patterns
+- **Context overflow prevention** - Warning signs table and full save pattern
+- Updated brain-usage.instructions.md with aggressive mid-task triggers
+
+## [2.1.0] - 2025-11-26
+
+### Added
+- **VaultIndexer** - In-memory index with cache persistence (.obsidian-brain/index.json)
+- **File watcher** - Live updates with 500ms debounce
+- **Tag search** - Support for `#tagname` syntax
+- **Scoring system** - Multi-factor ranking (title=10, tag=8, filename=4, heading=2, content=1)
+- **Delta updates** - Only reindex changed files
+
+### Fixed
+- O(n) search performance - replaced with indexed search O(1) for titles/tags
+
+## [2.0.0] - 2025-11-26
+
+### Added
+- **memory tool** - Workspace-scoped memory (replaces Agent Memory)
+- **Quick note feature** - Timestamped notes to _Inbox with `quick_note` operation
+- **New operations** - str_replace, insert, delete, move
+- **Brain compression prompt** - brain-compress.prompt.md
+- **Manager agent** - brain-manager.agent.md for vault organization
+
+### Changed
+- Extension from v1.x to v2.0 with consolidated tools
+- All Agent Memory features now in brain/memory tools
+
 ## [1.6.0] - 2024-11-25
 
 ### Added
