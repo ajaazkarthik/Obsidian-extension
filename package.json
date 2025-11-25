@@ -1,0 +1,421 @@
+{
+  "name": "obsidian-brain",
+  "publisher": "ubanishathanvenkatesan",
+  "displayName": "Obsidian Brain - Global Agent Memory",
+  "description": "Complete AI agent memory system: global knowledge persistence with Obsidian vault, workspace-scoped memory, chat history search, and filesystem operations. Replaces Agent Memory with enhanced features.",
+  "version": "2.4.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "obsidian",
+    "ai",
+    "memory",
+    "copilot",
+    "chat",
+    "knowledge-base",
+    "agent-memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/obsidian-brain"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "obsidianBrain.checkConnection",
+        "title": "Check Obsidian MCP Connection",
+        "category": "Obsidian Brain"
+      },
+      {
+        "command": "obsidianBrain.openVault",
+        "title": "Open Obsidian Vault",
+        "category": "Obsidian Brain"
+      },
+      {
+        "command": "obsidianBrain.showAllowedDirectories",
+        "title": "Show Allowed Filesystem Directories",
+        "category": "Obsidian Brain"
+      },
+      {
+        "command": "obsidianBrain.searchChatHistory",
+        "title": "Search Chat History",
+        "category": "Obsidian Brain"
+      },
+      {
+        "command": "obsidianBrain.getChatStats",
+        "title": "Get Chat History Statistics",
+        "category": "Obsidian Brain"
+      },
+      {
+        "command": "obsidianBrain.rebuildIndex",
+        "title": "Rebuild Brain Index",
+        "category": "Obsidian Brain"
+      }
+    ],
+    "configuration": {
+      "title": "Obsidian Brain",
+      "properties": {
+        "obsidianBrain.vaultPath": {
+          "type": "string",
+          "default": "C:\\workspace\\obsidian-vault",
+          "description": "Path to your Obsidian vault for global brain storage."
+        },
+        "obsidianBrain.filesystemAllowedDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional directories the integrated filesystem tool is allowed to access."
+        }
+      }
+    },
+    "chatPromptFiles": [
+      {
+        "name": "brain-remember",
+        "description": "Store decisions, learnings, and insights in your Obsidian brain",
+        "path": "./prompts/brain-remember.prompt.md"
+      },
+      {
+        "name": "brain-summarize",
+        "description": "Summarize and store current conversation context",
+        "path": "./prompts/brain-summarize.prompt.md"
+      },
+      {
+        "name": "brain-recall",
+        "description": "Search and recall knowledge from your Obsidian brain",
+        "path": "./prompts/brain-recall.prompt.md"
+      },
+      {
+        "name": "brain-compress",
+        "description": "Compress and optimize brain notes - consolidate, clean up, organize",
+        "path": "./prompts/brain-compress.prompt.md"
+      },
+      {
+        "name": "brain-auto-save",
+        "description": "Auto-summarize and handoff when context window is filling up",
+        "path": "./prompts/brain-auto-save.prompt.md"
+      }
+    ],
+    "chatInstructions": [
+      {
+        "name": "brain-usage",
+        "description": "Instructions for using the Obsidian brain for global knowledge persistence",
+        "path": "./prompts/brain-usage.instructions.md"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "obsidian_brain",
+        "tags": [
+          "obsidian",
+          "brain",
+          "memory",
+          "knowledge",
+          "vault",
+          "notes",
+          "persistence",
+          "global"
+        ],
+        "toolReferenceName": "obsidian_brain",
+        "displayName": "Obsidian Brain",
+        "modelDescription": "Global knowledge store using Obsidian vault that persists across ALL workspaces. IMPORTANT: ALWAYS search brain BEFORE doing anything else - you may have solved this before. ASSUME INTERRUPTION: Your context might reset anytime - any learning NOT in brain is LOST FOREVER across ALL future sessions. MID-TASK RULE: Every 3-5 tool calls, record any decisions, solutions, or learnings to brain immediately. DO NOT batch for end. Operations: 'search' (ALWAYS first), 'list' (browse structure), 'read' (get content), 'write' (create note), 'append' (PREFERRED - add to existing), 'quick_note' (fast capture to _Inbox), 'str_replace' (edit existing), 'insert' (add at line), 'delete' (remove note), 'move' (reorganize). Vault structure: /Engineering/ (projects), /Playbooks/ (how-tos), /Decisions/ (ADRs), /Snippets/ (patterns), /_Inbox/ (quick notes). Use brain for LONG-TERM knowledge valuable across projects. Use memory tool for workspace-specific progress.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(brain)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": [
+                "search",
+                "list",
+                "read",
+                "write",
+                "append",
+                "quick_note",
+                "str_replace",
+                "insert",
+                "delete",
+                "move"
+              ],
+              "description": "The operation to perform"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search query (required for search operation)"
+            },
+            "filepath": {
+              "type": "string",
+              "description": "Path to the note file (required for read, write, append, str_replace, insert, delete, move)"
+            },
+            "content": {
+              "type": "string",
+              "description": "Content to write, append, insert, or for quick_note"
+            },
+            "directory": {
+              "type": "string",
+              "description": "Directory to list (optional for list operation, defaults to root)"
+            },
+            "old_str": {
+              "type": "string",
+              "description": "Text to find and replace (required for str_replace)"
+            },
+            "new_str": {
+              "type": "string",
+              "description": "Replacement text (required for str_replace)"
+            },
+            "insert_line": {
+              "type": "number",
+              "description": "Line number for insertion (1-indexed, required for insert)"
+            },
+            "destination": {
+              "type": "string",
+              "description": "Destination path (required for move operation)"
+            }
+          },
+          "required": [
+            "operation"
+          ]
+        }
+      },
+      {
+        "name": "memory",
+        "tags": [
+          "memory",
+          "context",
+          "workspace",
+          "session",
+          "progress",
+          "agent-memory"
+        ],
+        "toolReferenceName": "memory",
+        "displayName": "Memory",
+        "modelDescription": "Manage persistent memory across conversations through workspace-scoped files stored in the Obsidian vault's _Workspaces/[workspace-name]/ directory. This tool allows you to create, read, update, and delete memory files that persist between sessions. IMPORTANT: ALWAYS view your memory directory (/memories) before doing anything else to check for earlier progress. As you make progress on tasks, record status, progress, and thoughts in your memory. ASSUME INTERRUPTION: Your context window might be reset at any moment - any progress not recorded is LOST. Keep memory organized, delete files no longer relevant, avoid creating unnecessary files. Use memory for WORKSPACE-SPECIFIC context. Use obsidian_brain for knowledge valuable across ALL projects. Operations: 'view' (read file or list directory), 'create' (new file), 'str_replace' (edit), 'insert' (add at line), 'delete' (remove), 'rename' (move/rename).",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(database)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "view",
+                "create",
+                "str_replace",
+                "insert",
+                "delete",
+                "rename"
+              ],
+              "description": "The memory operation to perform: view, create, str_replace, insert, delete, or rename"
+            },
+            "path": {
+              "type": "string",
+              "description": "Path to the file or directory within /memories. Must start with /memories/ for security."
+            },
+            "view_range": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "Optional [start_line, end_line] to read specific lines (1-indexed, for view command)"
+            },
+            "file_text": {
+              "type": "string",
+              "description": "Complete content for the file (required for create command)"
+            },
+            "old_str": {
+              "type": "string",
+              "description": "Exact text to find and replace (required for str_replace)"
+            },
+            "new_str": {
+              "type": "string",
+              "description": "Replacement text (required for str_replace)"
+            },
+            "insert_line": {
+              "type": "number",
+              "description": "Line number for insertion, 1-indexed (required for insert)"
+            },
+            "insert_text": {
+              "type": "string",
+              "description": "Text to insert (required for insert)"
+            },
+            "old_path": {
+              "type": "string",
+              "description": "Current path (required for rename)"
+            },
+            "new_path": {
+              "type": "string",
+              "description": "New path (required for rename)"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      {
+        "name": "integrated_filesystem",
+        "tags": [
+          "filesystem",
+          "files",
+          "directories",
+          "read",
+          "write",
+          "search"
+        ],
+        "toolReferenceName": "integrated_filesystem",
+        "displayName": "Integrated Filesystem",
+        "modelDescription": "Integrated filesystem operations without requiring external MCP server configuration. Provides all common file operations directly within VS Code. Operations: 'read_file' (read single file with optional head/tail), 'read_multiple_files' (parallel file reads), 'write_file' (create/overwrite), 'list_directory' (list contents), 'directory_tree' (recursive JSON tree), 'move_file' (move/rename), 'search_files' (glob pattern search), 'create_directory' (create dirs), 'get_file_info' (metadata). All paths are validated against allowed directories for security.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(folder)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": [
+                "read_file",
+                "read_multiple_files",
+                "write_file",
+                "list_directory",
+                "directory_tree",
+                "move_file",
+                "search_files",
+                "create_directory",
+                "get_file_info"
+              ],
+              "description": "The operation to perform"
+            },
+            "path": {
+              "type": "string",
+              "description": "File or directory path"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of file paths (for read_multiple_files)"
+            },
+            "content": {
+              "type": "string",
+              "description": "Content to write (for write_file)"
+            },
+            "pattern": {
+              "type": "string",
+              "description": "Glob pattern (for search_files)"
+            },
+            "source": {
+              "type": "string",
+              "description": "Source path (for move_file)"
+            },
+            "destination": {
+              "type": "string",
+              "description": "Destination path (for move_file)"
+            },
+            "head": {
+              "type": "number",
+              "description": "Read first N lines (for read_file)"
+            },
+            "tail": {
+              "type": "number",
+              "description": "Read last N lines (for read_file)"
+            }
+          },
+          "required": [
+            "operation"
+          ]
+        }
+      },
+      {
+        "name": "chat_history",
+        "tags": [
+          "chat",
+          "history",
+          "conversations",
+          "search",
+          "copilot",
+          "sessions"
+        ],
+        "toolReferenceName": "chat_history",
+        "displayName": "Chat History",
+        "modelDescription": "Search and browse VS Code chat history across ALL workspaces. Indexes all Copilot/agent chat sessions stored by VS Code. Operations: 'search' (full-text search with optional date/workspace filters), 'list_sessions' (browse sessions with previews), 'read_session' (read complete conversation), 'get_stats' (statistics about chat history), 'export_session' (export to Obsidian vault), 'rebuild_index' (force refresh). Supports date filters: 'today', 'yesterday', 'last_week', 'last_month', or ISO dates (YYYY-MM-DD). Use this to recall past conversations, find solutions discussed before, or export valuable conversations to your Obsidian brain.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(history)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": [
+                "search",
+                "list_sessions",
+                "read_session",
+                "get_stats",
+                "export_session",
+                "rebuild_index"
+              ],
+              "description": "The operation to perform"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search query (for search operation)"
+            },
+            "session_id": {
+              "type": "string",
+              "description": "Session ID (for read_session, export_session)"
+            },
+            "date_from": {
+              "type": "string",
+              "description": "Start date filter: 'today', 'yesterday', 'last_week', 'last_month', or YYYY-MM-DD"
+            },
+            "date_to": {
+              "type": "string",
+              "description": "End date filter: 'today', 'yesterday', 'last_week', 'last_month', or YYYY-MM-DD"
+            },
+            "workspace": {
+              "type": "string",
+              "description": "Filter by workspace name"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Maximum number of results"
+            },
+            "include_responses": {
+              "type": "boolean",
+              "description": "Include assistant responses in search results"
+            }
+          },
+          "required": [
+            "operation"
+          ]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --pre-release"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "^5.9.2"
+  }
+}
