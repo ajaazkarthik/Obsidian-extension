@@ -108,6 +108,30 @@ export class VaultIndexer {
     }
 
     /**
+     * Get information about a specific indexed file
+     */
+    getFileInfo(filepath: string): IndexedFile | null {
+        if (!this.index) return null;
+        // Normalize filepath (remove leading slash if present)
+        const normalizedPath = filepath.startsWith('/') ? filepath.slice(1) : filepath;
+        return this.index.files.get(normalizedPath) || null;
+    }
+
+    /**
+     * Get recently modified files sorted by modification time (most recent first)
+     */
+    getRecentFiles(limit: number = 10): IndexedFile[] {
+        if (!this.index) return [];
+        
+        const files = Array.from(this.index.files.values());
+        
+        // Sort by modification time descending
+        files.sort((a, b) => b.modified - a.modified);
+        
+        return files.slice(0, limit);
+    }
+
+    /**
      * Immediately index a specific file (call after writes for instant searchability)
      */
     async indexFileImmediately(filepath: string): Promise<void> {
@@ -172,6 +196,9 @@ export class VaultIndexer {
         // Tokenize query for OR search
         const queryTokens = this.tokenize(query.toLowerCase());
         
+        // FIX 1: total files needed for IDF weighting
+        const totalFiles = this.index.files.size;
+        
         // Score each file
         for (const [filepath, file] of this.index.files) {
             let score = 0;
@@ -212,9 +239,21 @@ export class VaultIndexer {
                 }
                 // Word index match (content contains word)
                 else if (this.index.wordIndex.get(token)?.has(filepath)) {
-                    score += 1;
+                    // FIX 1: IDF-weighted scoring — rare words rank higher than common words
+                    const wordFiles = this.index.wordIndex.get(token);
+                    const idf = Math.log((totalFiles + 1) / ((wordFiles?.size || 1) + 1)) / Math.log(totalFiles + 2);
+                    score += Math.max(0.5, idf * 2);
                     matchType = 'content';
                 }
+            }
+            
+            // FIX 2: Recency boost — recent notes float above older same-content notes (7-day half-life)
+            const ageDays = (Date.now() - (file.modified || 0)) / 86400000;
+            score += Math.max(0, 1.5 * Math.exp(-ageDays / 7));
+            
+            // FIX 14: _Archive/ penalty — superseded content buried 95% below live notes
+            if (filepath.startsWith('_Archive/') || filepath.startsWith('_Archive\\')) {
+                score *= 0.05;
             }
             
             if (score > 0 && !seenPaths.has(filepath)) {

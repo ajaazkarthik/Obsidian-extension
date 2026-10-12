@@ -3,7 +3,7 @@
   "publisher": "ubanishathanvenkatesan",
   "displayName": "Obsidian Brain - Global Agent Memory",
   "description": "Complete AI agent memory system: global knowledge persistence with Obsidian vault, workspace-scoped memory, chat history search, and filesystem operations. Replaces Agent Memory with enhanced features.",
-  "version": "2.4.0",
+  "version": "2.9.0",
   "license": "MIT",
   "engines": {
     "vscode": "^1.95.0"
@@ -129,7 +129,7 @@
         ],
         "toolReferenceName": "obsidian_brain",
         "displayName": "Obsidian Brain",
-        "modelDescription": "Global knowledge store using Obsidian vault that persists across ALL workspaces. IMPORTANT: ALWAYS search brain BEFORE doing anything else - you may have solved this before. ASSUME INTERRUPTION: Your context might reset anytime - any learning NOT in brain is LOST FOREVER across ALL future sessions. MID-TASK RULE: Every 3-5 tool calls, record any decisions, solutions, or learnings to brain immediately. DO NOT batch for end. Operations: 'search' (ALWAYS first), 'list' (browse structure), 'read' (get content), 'write' (create note), 'append' (PREFERRED - add to existing), 'quick_note' (fast capture to _Inbox), 'str_replace' (edit existing), 'insert' (add at line), 'delete' (remove note), 'move' (reorganize). Vault structure: /Engineering/ (projects), /Playbooks/ (how-tos), /Decisions/ (ADRs), /Snippets/ (patterns), /_Inbox/ (quick notes). Use brain for LONG-TERM knowledge valuable across projects. Use memory tool for workspace-specific progress.",
+        "modelDescription": "Global knowledge store using Obsidian vault that persists across ALL workspaces. IMPORTANT: ALWAYS search brain BEFORE doing anything else - you may have solved this before. ASSUME INTERRUPTION: Your context might reset anytime - any learning NOT in brain is LOST FOREVER across ALL future sessions. MID-TASK RULE: Every 3-5 tool calls, record any decisions, solutions, or learnings to brain immediately. DO NOT batch for end. Operations: 'search' (ALWAYS first), 'list' (browse structure), 'read' (get content), 'write' (create note), 'append' (PREFERRED - add to existing), 'quick_note' (fast capture to _Inbox), 'str_replace' (edit existing), 'insert' (add at line), 'delete' (remove note), 'move' (reorganize), 'summarize_note' (TL;DR of a note), 'list_recent' (recently modified notes), 'auto_tag' (suggest/apply tags based on content). Vault structure: /Engineering/ (projects), /Playbooks/ (how-tos), /Decisions/ (ADRs), /Snippets/ (patterns), /_Inbox/ (quick notes). Use brain for LONG-TERM knowledge valuable across projects. Use memory tool for workspace-specific progress.",
         "canBeReferencedInPrompt": true,
         "icon": "$(brain)",
         "inputSchema": {
@@ -147,7 +147,10 @@
                 "str_replace",
                 "insert",
                 "delete",
-                "move"
+                "move",
+                "summarize_note",
+                "list_recent",
+                "auto_tag"
               ],
               "description": "The operation to perform"
             },
@@ -182,6 +185,14 @@
             "destination": {
               "type": "string",
               "description": "Destination path (required for move operation)"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Maximum number of results (optional for list_recent, default 10)"
+            },
+            "apply_tags": {
+              "type": "boolean",
+              "description": "Whether to automatically apply high-confidence suggested tags (optional for auto_tag, default false)"
             }
           },
           "required": [

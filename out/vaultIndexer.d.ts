@@ -64,6 +64,14 @@ export declare class VaultIndexer {
         lastUpdated: Date;
     } | null;
     /**
+     * Get information about a specific indexed file
+     */
+    getFileInfo(filepath: string): IndexedFile | null;
+    /**
+     * Get recently modified files sorted by modification time (most recent first)
+     */
+    getRecentFiles(limit?: number): IndexedFile[];
+    /**
      * Immediately index a specific file (call after writes for instant searchability)
      */
     indexFileImmediately(filepath: string): Promise<void>;

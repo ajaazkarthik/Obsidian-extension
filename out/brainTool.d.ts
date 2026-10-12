@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 interface BrainToolInput {
-    operation: 'search' | 'list' | 'read' | 'write' | 'append' | 'quick_note' | 'str_replace' | 'insert' | 'delete' | 'move';
+    operation: 'search' | 'list' | 'read' | 'write' | 'append' | 'quick_note' | 'str_replace' | 'insert' | 'delete' | 'move' | 'summarize_note' | 'list_recent' | 'auto_tag';
     query?: string;
     filepath?: string;
     content?: string;
@@ -9,6 +9,9 @@ interface BrainToolInput {
     new_str?: string;
     insert_line?: number;
     destination?: string;
+    limit?: number;
+    apply_tags?: boolean;
+    max_chars?: number;
 }
 /**
  * BrainTool provides a global knowledge store using an Obsidian vault.
@@ -19,6 +22,8 @@ export declare class BrainTool implements vscode.LanguageModelTool<BrainToolInpu
     private filesystemBackend;
     private indexer;
     private mcpAvailable;
+    private seenHashes;
+    private operationCount;
     constructor(context: vscode.ExtensionContext);
     /**
      * Initialize the indexer - call this on extension activation
@@ -41,6 +46,8 @@ export declare class BrainTool implements vscode.LanguageModelTool<BrainToolInpu
      * Check if Obsidian MCP is available
      */
     checkObsidianMcpConnection(): Promise<boolean>;
+    private suggestRoute;
+    private djb2;
     invoke(options: vscode.LanguageModelToolInvocationOptions<BrainToolInput>, token: vscode.CancellationToken): Promise<vscode.LanguageModelToolResult>;
     prepareInvocation(options: vscode.LanguageModelToolInvocationPrepareOptions<BrainToolInput>, token: vscode.CancellationToken): Promise<vscode.PreparedToolInvocation>;
     private handleSearch;
@@ -53,6 +60,13 @@ export declare class BrainTool implements vscode.LanguageModelTool<BrainToolInpu
     private handleInsert;
     private handleDelete;
     private handleMove;
+    private handleSummarizeNote;
+    private handleListRecent;
+    private handleAutoTag;
+    /**
+     * Analyze content and suggest relevant tags based on keywords and patterns
+     */
+    private analyzeContentForTags;
     private errorResult;
 }
 export {};

@@ -2,6 +2,31 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.5.0] - 2025-11-27
+
+### Added
+- **summarize_note operation** - TL;DR summary of any note with:
+  - Word/line/paragraph counts
+  - Tag extraction and display
+  - Heading structure outline
+  - Key bullet points (first 5)
+  - Summary from first meaningful paragraph
+  - Link reference counts
+- **list_recent operation** - Show recently modified notes across all folders:
+  - Sorted by modification time (most recent first)
+  - Configurable limit (default: 10)
+  - Shows title, path, date/time, tags, and preview
+- **auto_tag operation** - Content-based tag suggestions:
+  - Analyzes content for 20+ technical/documentation patterns
+  - Confidence scoring (60%+ threshold for auto-apply)
+  - Pattern categories: languages, frameworks, document types, project stages
+  - Code block detection for #code-example tag
+  - Optional `apply_tags: true` to automatically add high-confidence tags
+
+### Changed
+- VaultIndexer: Added `getFileInfo()` and `getRecentFiles()` methods
+- Package schema updated with new operations and parameters
+
 ## [2.4.0] - 2025-11-26
 
 ### Added
