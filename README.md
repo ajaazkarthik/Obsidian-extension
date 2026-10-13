@@ -1,187 +1,62 @@
-# Obsidian Brain - Global Agent Memory
+# Obsidian Brain
 
-A VS Code extension that provides global knowledge persistence for AI agents using an Obsidian vault, with workspace-scoped memory, integrated filesystem operations, and chat history search. **Perfect for AI agents working across multiple projects.**
+Obsidian Brain 2.11.1 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool and no MCP server requirement.
 
-**Status:** v2.4.0 - Production Ready (recommended for vaults <300 files)
-**Score:** 78/100 - Solid v2.x product with room for enhancement
+Leave `obsidianBrain.vaultPath` blank for automatic setup: Windows uses `C:\workspace\obsidian-vault`; macOS and Linux use `~/workspace/obsidian-vault`. The extension creates the default vault and standard folders on first use. Set an absolute path (or `~/…`) to use an existing vault instead. Paths remain machine-specific with workspace overrides supported, and are resolved on the extension host, including SSH/WSL hosts.
 
-## ✨ Key Features
+Use **Configure Obsidian Vault** to choose an existing folder through the native folder picker. Invalid or inaccessible explicit paths produce configuration errors instead of empty search results. A changed setting switches both file I/O and the index without reloading VS Code. The extension retains **Check Obsidian Vault Connection**, **Open Obsidian Vault** and **Rebuild Brain Index** commands. Existing agents can continue to reference `obsidian_brain` by name.
 
-### 🧠 Obsidian Brain Tool - Global Knowledge Persistence
-Store knowledge that persists across **ALL workspaces and ALL projects forever**.
+## Operations
 
-- **Instant Search** - Indexed, scored search with `#tag` support (zero-delay results)
-- **Structured Organization** - Engineering/, Playbooks/, Decisions/, Snippets/ folders
-- **Quick Notes** - Capture ideas to _Inbox with auto-timestamp
-- **Tag-Based Discovery** - Find notes by `#topic` hashtags
-- **Operations** - search, list, read, write, append, quick_note, str_replace, insert, delete, move
+| Operation | Behavior |
+| --- | --- |
+| `search` | Scored title, filename, tag, heading and body search; multiword OR; `limit` defaults to 15 |
+| `list` | Browse a vault directory |
+| `read` | Inline note content, capped at 7,000 characters by default; pass a larger explicit `max_chars` after truncation |
+| `write` | Create or overwrite a note; preserve different overwritten content under `_Archive/` |
+| `append` | Add content to a note |
+| `quick_note` | Content-based routing, session hash deduplication, timestamp and random suffix |
+| `str_replace` | Replace the first exact match and archive superseded content |
+| `insert` | Insert at a 1-based line or create a missing note |
+| `delete` | Delete a note and remove index postings |
+| `move` | Move a note and update indexed paths |
+| `summarize_note` | Factual local TL;DR, headings, statistics and canonical tags |
+| `list_recent` | Recently modified notes; `limit` defaults to 10 |
+| `auto_tag` | Content-based tag suggestions; optional `apply_tags` uses the existing 60% threshold |
+| `related_notes` | Explicit shared-tag retrieval; rare tags carry more weight; `limit` defaults to 10; no LLM calls |
 
-### 💾 Memory Tool - Workspace-Scoped Notes
-Temporary workspace-specific context that helps during current work.
+Search displays at most eight tags per hit, while the full tag set remains indexed. Body terms and queries use the same tokenizer and ordered suffix stemming. Body ranking uses document frequency and occurrence counts, followed by tiered recency and an archive penalty.
 
-- **Session Context** - Track progress, decisions, blockers for THIS workspace
-- **Auto-Organized** - Stored in `_Workspaces/[workspace]/` 
-- **Quick Access** - view, create, str_replace, insert, delete, rename
-- **Perfect For** - TODO lists, temporary notes, branch-specific context
+The version-3 disk cache stores file metadata and compact path-ID tag and counted word postings. Startup reconciles new, changed and deleted notes. Invalid or incomplete caches rebuild safely. Tool writes update the in-memory index immediately; watcher disk-cache writes coalesce for five seconds. Disposal flushes pending persistence.
 
-### 📁 Integrated Filesystem Tool
-File operations without external MCP dependency.
+Inline tags exclude code fences, inline code, URL fragments, line anchors and six/eight-character hex colours containing digits. YAML bracket arrays and block lists work with LF and CRLF. Indexing, summaries and auto-tag filtering share the same extractor.
 
-- **Parallel Reads** - read_multiple_files for batch operations
-- **Pattern Search** - Glob-based file discovery
-- **Full Control** - write_file, move_file, create_directory, get_file_info
+Every third successful `write`, `append`, `quick_note`, `str_replace` or `insert` appends a timestamped save count and up to 20 recent activity entries to `_Inbox/session-activity-log.md`. Duplicate captures and failed saves do not count. Every 12 operations, a reminder asks you to save useful progress. Checkpoints record file activity; the extension does not monitor context or token usage and emits no automatic compaction directives.
 
-### 📜 Chat History Tool
-Never lose important conversations - search across ALL VS Code chat sessions.
+## Prompts and organization
 
-- **Full-Text Search** - Find conversations about specific topics
-- **Date Filtering** - Search "last week" or specific date ranges
-- **Export** - Save valuable sessions to your Obsidian brain
-- **Statistics** - View chat activity over time
+The five prompt contributions remain: `brain-remember`, `brain-recall`, `brain-summarize`, `brain-compress` and `brain-auto-save`, plus the `brain-usage` instructions. Summaries and handoffs are explicitly requested through these prompts.
 
-## 🚀 Installation
+Use `Engineering/`, `Playbooks/`, `Decisions/` and `Snippets/` for reusable knowledge. Store workspace progress through the same brain tool in `_Workspaces/[workspace]/`. Quick captures route according to content, falling back to `_Inbox/`. The existing brain-manager agent is retained.
 
-1. Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=ubanishathanvenkatesan.obsidian-brain)
-2. Set your Obsidian vault path in VS Code settings
-3. Reload VS Code
-4. Start using the tools in Copilot Chat!
+## Build and verification
 
-## ⚙️ Configuration
+With Node and the existing development dependencies available:
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `obsidianBrain.vaultPath` | Path to your Obsidian vault | `C:\workspace\obsidian-vault` |
-| `obsidianBrain.filesystemAllowedDirectories` | Additional directories for filesystem access | `[]` |
-
-## 💡 Usage Patterns
-
-### Session Start
-```
-Search brain for prior context on this topic
-Check workspace memory for today's progress
-Begin work with context awareness
+```sh
+npm run compile
+npm test
+npm run package
 ```
 
-### During Work (Every 3-5 tool calls)
-```
-quick_note: "Decided on JWT for auth because stateless"
-quick_note: "Issue: CORS headers missing on prod"
-quick_note: "Next: Add backoff logic to retry handler"
-```
+The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.11.1.vsix`, inspects its manifest and runtime, and reruns the suite against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
 
-### Session End
-```
-append to Engineering/[project].md with:
-- What was accomplished
-- Key decisions and why
-- Problems and solutions
-- Next steps
-```
+The acceptance harness uses the actual compiled `BrainTool` and `VaultIndexer`, a minimal VS Code shim, uniquely named disposable vaults, controlled timestamps and mocked timers. Focused groups can run with `node test/acceptance.cjs index`, `tags`, `timers`, `operations` , `registration` or `platform`. `BRAIN_RUNTIME` selects a different compiled runtime for package verification. `test/baseline.cjs` documents the defects reproduced against the original 2.9 runtime; run it only with `BRAIN_RUNTIME` pointing at that isolated baseline.
 
-### Long Sessions (50+ messages)
-```
-When context window is 75% full:
-1. Summarize to brain: obsidian_brain: append
-2. Update workspace memory: memory: create
-3. Create handoff: Use handoff tool for new thread
-```
+Live VS Code UI behavior, host-managed response spilling and performance on a production vault require separate integration verification. No recall-quality, response-size or cache-size improvement percentage is claimed.
 
-## 📊 Performance & Scale
+## License
 
-| Vault Size | Recommended | Performance |
-|------------|------------|-------------|
-| <100 files | ✅ YES | Instant (<100ms) |
-| 100-300 files | ✅ GOOD | Fast (<500ms) |
-| 300-500 files | ⚠️ CAUTION | Monitor performance |
-| 500+ files | ❌ WAIT | Unproven, contact for updates |
+MIT. Publisher and extension identity remain `ubanishathanvenkatesan.obsidian-brain`.
 
-**Note:** Word index not cached - full rebuild on startup for large vaults.
-
-## 🎯 Best For
-
-- **Solo developers** building AI-assisted projects
-- **Multi-project workers** needing cross-project knowledge
-- **Long coding sessions** where context matters
-- **Decision documentation** with ADR format in Decisions/
-- **Code snippets** library in Snippets/
-
-## ⚠️ Known Limitations
-
-- No fuzzy search (typos will miss results)
-- No backlinks/graph view (Obsidian app has this)
-- No date range filtering
-- Word index not cached (startup lag for 500+ files)
-- VS Code only (use Obsidian app for mobile/other editors)
-
-## 🔒 Security
-
-- **No encryption** - Notes stored as plain markdown files
-- **No API keys needed** - Direct filesystem access
-- **No external service** - Everything local
-- ⚠️ **Don't store secrets** - Use environment variables instead
-
-## 📋 Commands
-
-- `🧠 Obsidian Brain: Open Vault` - Open vault in VS Code
-- `🧠 Obsidian Brain: Rebuild Index` - Force reindex all files  
-- `📜 Obsidian Brain: Search Chat History` - Search past conversations
-- `📊 Obsidian Brain: Get Chat Stats` - View chat activity
-
-## 🏗️ Architecture
-
-- **VaultIndexer** - In-memory index with file watching, cache persistence
-- **BrainTool** - Markdown-based CRUD with instant indexing
-- **MemoryTool** - Workspace-scoped storage (replaces Agent Memory)
-- **ContextWatcher** - Token tracking for context overflow prevention
-- **FilesystemBackend** - Direct VS Code filesystem API (no external MCP)
-
-## 📈 Evaluation Results
-
-After aggressive testing with 15+ subagent tests:
-
-| Category | Score | Notes |
-|----------|-------|-------|
-| **Core Functionality** | 17/20 | Solid, instant indexing works perfectly |
-| **Performance** | 15/20 | Great for small/medium vaults |
-| **Real-World Usability** | 16/25 | Good core, missing fuzzy search |
-| **vs Alternatives** | 22/25 | Beats Agent Memory decisively |
-| **Deal Breakers** | 8/10 | No critical bugs, scale unknowns |
-
-**Verdict:** ⚠️ CONDITIONAL RECOMMEND - Use for small-medium vaults with discipline.
-
-## 🔄 Migration from Agent Memory
-
-If you were using Agent Memory extension:
-
-1. Your workspace context now lives in `memory` tool (same /memories/ behavior)
-2. Global knowledge moves to `obsidian_brain` in your vault
-3. **Key difference**: Brain persists across workspaces (Agent Memory didn't)
-4. Much better search capabilities
-5. Requires Obsidian vault setup
-
-## 🐛 Reporting Issues
-
-Found a bug? Please report on [GitHub Issues](https://github.com/YOUR_USERNAME/obsidian-brain/issues)
-
-Include:
-- Vault size (approximate file count)
-- Error message
-- Steps to reproduce
-
-## 📝 License
-
-MIT
-
-## 🤝 Contributing
-
-Contributions welcome! This extension is actively maintained. Areas for improvement:
-- Fuzzy search implementation
-- Date range filtering
-- Backlinks support
-- Progress bar during indexing
-
-## 🎓 Learning Resources
-
-- [Obsidian Documentation](https://obsidian.md)
-- [VS Code Language Model Tools](https://code.visualstudio.com/api/extension-guides/language-model)
-- [GitHub Copilot Extension Guide](https://github.com/features/copilot)
+CI runs the compile, acceptance and packaged-runtime checks on Windows, macOS and Linux. Vault operations run in sequence so parallel appends and setting changes preserve content. Read failures from file locks or permissions are reported; only missing files are created by append/insert.

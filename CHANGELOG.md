@@ -2,6 +2,20 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.11.1] - 2026-10-13
+
+- Automatic platform-specific vault setup: Windows `C:\workspace\obsidian-vault`, macOS/Linux `~/workspace/obsidian-vault`; machine-specific setting with workspace overrides and native folder picker.
+- Serialized tool writes and vault switches; preserved existing files on permission/sharing errors and prevented recursive archiving with Windows note separators.
+- Added Windows/macOS/Linux CI and deterministic LF build output.
+- Validated native paths, normalized note separators, actionable access errors and synchronized index/I/O when vault settings change.
+
+- Consolidated native registration to `obsidian_brain` with 14 operations, including explicit shared-tag `related_notes`.
+- Added consistent suffix stemming, counted body postings, TF/IDF scoring, tiered recency and version-3 cache persistence with startup reconciliation and batched saves.
+- Unified canonical tags across search, summaries and auto-tag analysis; compacted the brain marker and search tag display.
+- Exposed capped reads and search limits; retained content routing, capture deduplication, immediate indexing and archived superseded content.
+- Added factual checkpoints every three successful saves and retained the 12-operation reminder. Removed orphaned tools and the disconnected context monitor.
+- Added shipped-runtime acceptance tests with disposable vaults and package inspection. No extension installation or reload is performed by the build.
+
 ## [2.5.0] - 2025-11-27
 
 ### Added

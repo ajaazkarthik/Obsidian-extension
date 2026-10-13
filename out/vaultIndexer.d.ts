@@ -1,3 +1,4 @@
+export declare const CACHE_VERSION = 3;
 /**
  * VaultIndexer provides fast search capabilities by maintaining an in-memory index
  * of the Obsidian vault. It watches for file changes and updates incrementally.
@@ -12,6 +13,7 @@ export interface IndexedFile {
     headings: HeadingInfo[];
     links: string[];
     firstLine: string;
+    bodyWordCount: number;
     wordCount: number;
 }
 export interface HeadingInfo {
@@ -25,7 +27,7 @@ export interface VaultIndex {
     lastUpdated: number;
     files: Map<string, IndexedFile>;
     tagIndex: Map<string, Set<string>>;
-    wordIndex: Map<string, Set<string>>;
+    wordIndex: Map<string, Map<string, number>>;
 }
 export interface IndexSearchResult {
     filepath: string;
@@ -37,19 +39,34 @@ export interface IndexSearchResult {
     tags?: string[];
     firstLine?: string;
 }
+export interface RelatedNote {
+    filepath: string;
+    filename: string;
+    title: string;
+    score: number;
+    sharedTags: string[];
+}
 export declare class VaultIndexer {
+    private readonly configuredPath?;
     private index;
     private vaultPath;
     private watcher;
     private indexing;
     private initialized;
     private debounceTimers;
-    constructor();
+    private initialization;
+    private cacheSaveTimer;
+    private cacheDirty;
+    private cacheWrite;
+    private pendingUpdates;
+    private disposed;
+    constructor(configuredPath?: string | undefined);
     refreshVaultPath(): void;
     /**
      * Initialize the index - call this on extension activation
      */
     initialize(): Promise<void>;
+    private initializeIndex;
     /**
      * Check if index is ready
      */
@@ -120,17 +137,20 @@ export declare class VaultIndexer {
     private onFileDeleted;
     private getRelativePath;
     private extractTitle;
-    private extractTags;
+    /** Canonical tags shared by indexing, summaries and auto-tag analysis. */
+    extractTags(content: string): string[];
     private extractHeadings;
     private extractLinks;
     private extractFirstLine;
     private tokenize;
+    private stem;
+    getRelatedNotes(filepath: string, limit?: number): RelatedNote[];
     private hashContent;
     private getCachePath;
+    private trackUpdate;
+    private scheduleCacheSave;
     private saveToCache;
     private loadFromCache;
-    /**
-     * Dispose of resources
-     */
-    dispose(): void;
+    /** Cancel timers, finish queued indexing and persist pending changes. */
+    dispose(): Promise<void>;
 }

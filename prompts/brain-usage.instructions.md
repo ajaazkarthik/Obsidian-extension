@@ -25,17 +25,9 @@ Every 3-5 tool calls, ask yourself:
 
 **DO NOT BATCH UPDATES FOR THE END.** The value is in capturing insights AS THEY HAPPEN.
 
-## ⚠️ WHEN TO USE BRAIN vs MEMORY
+## Workspace Progress and Global Knowledge
 
-| Use `memory` tool for: | Use `obsidian_brain` for: |
-|------------------------|---------------------------|
-| Current task progress | Learnings that apply to ANY project |
-| Workspace-specific context | Decisions worth remembering forever |
-| Temporary scratch notes | Solutions to problems you might face again |
-| Branch-specific state | Code patterns and snippets |
-| This session's status | Knowledge that has long-term value |
-
-**Rule of thumb**: If you'd want to remember this in 6 months when working on a different project, put it in the BRAIN.
+Use `obsidian_brain` for both workspace progress and reusable knowledge. Store project progress in `_Workspaces/[workspace]/` notes, and long-term decisions, solutions and patterns in the main vault directories.
 
 ## ⚠️ COMPLETION CHECKLIST (BEFORE FINISHING)
 
@@ -46,43 +38,18 @@ Before completing ANY task, you MUST update brain with:
 - [ ] Lessons learned / gotchas
 - [ ] Reusable patterns discovered
 
-## 🔴 CONTEXT OVERFLOW PREVENTION (AUTO-SAVE)
+## Save Activity Checkpoints
 
-**Long conversations WILL lose context.** When you notice ANY of these signs, IMMEDIATELY save progress:
+Every third successful write, append, quick_note, str_replace or insert appends a timestamped activity checkpoint to `_Inbox/session-activity-log.md`. It records the save count and up to 20 recent saves. Duplicate quick notes do not count as saves. Every 12 operations, the tool reminds you to save useful progress.
 
-| Warning Sign | Action |
-|--------------|--------|
-| 50+ messages in conversation | `quick_note` with checkpoint |
-| Complex multi-step task | Update memory after each major step |
-| Response quality declining | Full summarize to brain + handoff |
-| Forgetting earlier context | Re-read memory, then save current state |
-| About to start new phase | Checkpoint current progress first |
-
-### Quick Checkpoint Pattern
-Every 15-20 tool calls, do a quick save:
-```
-obsidian_brain: operation="quick_note", content="
-Checkpoint - [workspace] - [task]
-Done: [1-2 accomplishments]
-Current: [what you're working on]
-Key file: [most important file]
-"
-```
-
-### Full Save Pattern (For Long Sessions)
-When context is getting full:
-1. Save to brain: `obsidian_brain: append` to Engineering/[project].md
-2. Update memory: `memory: create` with current state
-3. Create handoff if needed: use `handoff` tool
-
-**DON'T WAIT UNTIL IT'S TOO LATE.** Context loss = lost work.
+These records contain file activity, not conversation summaries or context measurements. Use `brain-auto-save` explicitly when you want to record accomplishments, decisions and next steps.
 
 ## Vault Organization
 
 | Directory | What Goes Here |
 |-----------|----------------|
 | `_Inbox/` | Quick notes (use `quick_note` operation) - organize later |
-| `_Workspaces/` | Auto-managed workspace memory (via `memory` tool) |
+| `_Workspaces/` | Workspace progress notes using `obsidian_brain` |
 | `_Archive/` | Old notes moved here for reference |
 | `/Engineering/` | Project notes, architecture, technical details |
 | `/Playbooks/` | How-to guides, procedures, workflows |
@@ -96,24 +63,20 @@ When context is getting full:
 |-----------|-------------|
 | `search` | ALWAYS do this first - find relevant past knowledge |
 | `list` | Browse vault structure to find where to add |
-| `read` | Get full content of a specific note |
+| `read` | Read inline, capped at 7,000 characters by default; pass a larger explicit `max_chars` if truncated |
 | `append` | Add to existing notes (PREFERRED) |
 | `write` | Create new notes (use sparingly) |
-| `quick_note` | Fast capture to _Inbox - just provide content, no filepath needed |
+| `quick_note` | Content-routed capture with session deduplication; no filepath needed |
 | `str_replace` | Edit specific text in existing note |
 | `insert` | Add content at specific line |
 | `delete` | Remove a note |
 | `move` | Reorganize notes between directories |
+| `summarize_note` | Get a factual TL;DR, structure and canonical tags |
+| `list_recent` | List recently modified notes with an optional limit |
+| `auto_tag` | Suggest tags or apply suggestions at confidence >=60% |
+| `related_notes` | Explicitly retrieve shared-tag notes, with an optional limit; no LLM calls |
 
-### Memory Tool (Workspace-Specific)
-| Command | When to Use |
-|---------|-------------|
-| `view` | Check existing memory for this workspace |
-| `create` | Create new memory file |
-| `str_replace` | Update existing memory content |
-| `insert` | Add to memory at specific line |
-| `delete` | Remove memory file |
-| `rename` | Move/rename memory files |
+Search uses `limit` (default 15); related notes and recent notes default to 10. Search shows at most eight tags per hit while preserving all tags in the index.
 
 ## Quick Capture Pattern
 
@@ -121,7 +84,7 @@ When you need to record something quickly without deciding where it goes:
 ```
 obsidian_brain: operation="quick_note", content="[Your insight here]"
 ```
-This auto-saves to `_Inbox/` with a timestamp. Use brain-manager to organize later.
+This uses content-based routing to Engineering/, Decisions/, Playbooks/, Snippets/, or `_Inbox/`, with a timestamp and random suffix. Use brain-manager to organize later.
 
 ## Recording Format
 

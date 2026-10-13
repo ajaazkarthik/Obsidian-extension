@@ -48,12 +48,12 @@ obsidian_brain: operation="append", filepath="Engineering/[project-name].md", co
 "
 ```
 
-## Step 2: Save to Workspace Memory
+## Step 2: Save Workspace Progress
 
-Update the workspace-specific memory with current state:
+Use the same brain tool to update workspace progress:
 
 ```
-memory: command="create", path="/memories/progress.md", file_text="
+obsidian_brain: operation="write", filepath="_Workspaces/[workspace]/progress.md", content="
 # Current Task Progress
 
 ## Active Work
@@ -108,18 +108,13 @@ Key file: [most important file being edited]
 "
 ```
 
-## Automatic Triggers
+## Save Activity Records
 
-Consider summarizing when you notice:
-- 🟡 Response quality declining
-- 🟡 Forgetting earlier context
-- 🟡 Repeating yourself
-- 🔴 Tool calls failing due to context limits
-- 🔴 Truncated responses
+The tool automatically records factual activity after every three successful saves and gives a save reminder after every 12 operations. It does not measure context usage or generate conversation summaries automatically. Invoke this prompt when you want to preserve a summary and next steps.
 
 ## Best Practices
 
-1. **Don't wait until critical** - Summarize at 60-70% context, not 95%
+1. **Save at meaningful milestones** - Record decisions and next steps while they are fresh
 2. **Be specific** - Include file paths, function names, exact decisions
 3. **Include rationale** - WHY decisions were made, not just WHAT
 4. **Tag consistently** - Use #auto-saved, #workspace-name, #project-name

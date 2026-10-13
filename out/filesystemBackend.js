@@ -34,18 +34,65 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FilesystemBackend = void 0;
+exports.resolveVaultPath = resolveVaultPath;
+exports.configuredVaultPath = configuredVaultPath;
+exports.normalizeNotePath = normalizeNotePath;
+exports.isFileNotFound = isFileNotFound;
+exports.prepareVault = prepareVault;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("path"));
-/**
- * FilesystemBackend provides direct filesystem access to the Obsidian vault
- * using VS Code's workspace.fs API. This is used as a fallback when Obsidian MCP is unavailable.
- */
-class FilesystemBackend {
-    vaultPath;
-    constructor() {
-        const config = vscode.workspace.getConfiguration('obsidianBrain');
-        this.vaultPath = config.get('vaultPath') || 'C:\\workspace\\obsidian-vault';
+const os = __importStar(require("os"));
+/** Resolve configuration on the extension host (including remote hosts). */
+function resolveVaultPath(configured, platform = process.platform, home = os.homedir()) {
+    const paths = platform === 'win32' ? path.win32 : path.posix;
+    let value = configured?.trim() || (platform === 'win32' ? 'C:\\workspace\\obsidian-vault' : paths.join(home, 'workspace', 'obsidian-vault'));
+    if (/^~(?:[\\/]|$)/.test(value))
+        value = paths.join(home, value.slice(2));
+    const valid = platform === 'win32'
+        ? /^(?:[a-zA-Z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(value)
+        : paths.isAbsolute(value) && !/^[a-zA-Z]:|^\\/.test(value);
+    if (!valid)
+        throw new Error(`Invalid Obsidian vault path "${value}" for ${platform}. Set obsidianBrain.vaultPath to an absolute path on this machine, or leave it blank for the automatic default.`);
+    return paths.normalize(value);
+}
+function configuredVaultPath() {
+    return resolveVaultPath(vscode.workspace.getConfiguration('obsidianBrain').get('vaultPath'));
+}
+function normalizeNotePath(filepath) {
+    if (/^[a-zA-Z]:|^[\\/]{2}/.test(filepath))
+        throw new Error('Use a vault-relative note path, not an absolute filesystem path.');
+    const normalized = path.posix.normalize(filepath.replace(/\\/g, '/').replace(/^\//, ''));
+    if (normalized === '..' || normalized.startsWith('../'))
+        throw new Error('Note path must stay inside the configured vault.');
+    return normalized === '.' ? '' : normalized;
+}
+/** VS Code and Node-based harnesses use different missing-file error codes. */
+function isFileNotFound(error) {
+    return !!error && typeof error === 'object' && 'code' in error
+        && (error.code === 'FileNotFound' || error.code === 'ENOENT');
+}
+/** Create only the automatic default; explicit vaults must already be accessible. */
+async function prepareVault(vaultPath) {
+    const configured = vscode.workspace.getConfiguration('obsidianBrain').get('vaultPath')?.trim();
+    try {
+        if (!configured) {
+            await vscode.workspace.fs.createDirectory(vscode.Uri.file(vaultPath));
+            for (const directory of ['Engineering', 'Playbooks', 'Decisions', 'Snippets', '_Inbox', '_Workspaces', '_Archive']) {
+                await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.join(vaultPath, directory)));
+            }
+        }
+        const stat = await vscode.workspace.fs.stat(vscode.Uri.file(vaultPath));
+        if ((stat.type & vscode.FileType.Directory) === 0)
+            throw new Error('The path is not a directory');
+        await vscode.workspace.fs.readDirectory(vscode.Uri.file(vaultPath));
     }
+    catch (error) {
+        throw new Error(`Cannot access Obsidian vault "${vaultPath}": ${error instanceof Error ? error.message : String(error)}. Configure obsidianBrain.vaultPath to a readable, writable folder on this machine.`);
+    }
+}
+/** Native vault I/O shared by the tool and indexer on every supported platform. */
+class FilesystemBackend {
+    vaultPath = '';
     /**
      * Get the current vault path
      */
@@ -55,17 +102,17 @@ class FilesystemBackend {
     /**
      * Refresh the vault path from settings
      */
-    refreshVaultPath() {
-        const config = vscode.workspace.getConfiguration('obsidianBrain');
-        this.vaultPath = config.get('vaultPath') || 'C:\\workspace\\obsidian-vault';
+    refreshVaultPath(vaultPath = configuredVaultPath()) {
+        this.vaultPath = vaultPath;
     }
     /**
      * Resolve a relative path within the vault to an absolute path
      */
     resolvePath(relativePath) {
         // Remove leading slash if present
-        const cleanPath = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath;
-        return path.join(this.vaultPath, cleanPath);
+        if (!this.vaultPath)
+            this.refreshVaultPath();
+        return path.join(this.vaultPath, normalizeNotePath(relativePath));
     }
     /**
      * Check if a file or directory exists
@@ -76,8 +123,10 @@ class FilesystemBackend {
             await vscode.workspace.fs.stat(uri);
             return true;
         }
-        catch {
-            return false;
+        catch (error) {
+            if (isFileNotFound(error))
+                return false;
+            throw error;
         }
     }
     /**
@@ -108,8 +157,10 @@ class FilesystemBackend {
         try {
             existingContent = await this.readFile(filePath);
         }
-        catch {
-            // File doesn't exist, will create new
+        catch (error) {
+            if (!isFileNotFound(error))
+                throw error;
+            // Missing file: create it with the appended content.
         }
         const newContent = existingContent ? `${existingContent}\n${content}` : content;
         await this.writeFile(filePath, newContent);
@@ -121,12 +172,7 @@ class FilesystemBackend {
         // If it's a relative path, resolve it
         const fullPath = dirPath.startsWith(this.vaultPath) ? dirPath : this.resolvePath(dirPath);
         const uri = vscode.Uri.file(fullPath);
-        try {
-            await vscode.workspace.fs.createDirectory(uri);
-        }
-        catch {
-            // Directory might already exist, ignore error
-        }
+        await vscode.workspace.fs.createDirectory(uri);
     }
     /**
      * Delete a file or directory
@@ -150,6 +196,7 @@ class FilesystemBackend {
      * List contents of a directory
      */
     async listDirectory(dirPath = '') {
+        dirPath = normalizeNotePath(dirPath);
         const fullPath = this.resolvePath(dirPath);
         const uri = vscode.Uri.file(fullPath);
         const entries = await vscode.workspace.fs.readDirectory(uri);

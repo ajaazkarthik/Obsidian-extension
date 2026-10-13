@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { FilesystemBackend, SearchResult, DirectoryEntry } from './filesystemBackend.js';
+import { FilesystemBackend, DirectoryEntry, configuredVaultPath, normalizeNotePath, isFileNotFound } from './filesystemBackend.js';
 import { VaultIndexer, IndexSearchResult } from './vaultIndexer.js';
 
 interface BrainToolInput {
-    operation: 'search' | 'list' | 'read' | 'write' | 'append' | 'quick_note' | 'str_replace' | 'insert' | 'delete' | 'move' | 'summarize_note' | 'list_recent' | 'auto_tag';
+    operation: 'search' | 'list' | 'read' | 'write' | 'append' | 'quick_note' | 'str_replace' | 'insert' | 'delete' | 'move' | 'summarize_note' | 'list_recent' | 'auto_tag' | 'related_notes';
     query?: string;
     filepath?: string;
     content?: string;
@@ -17,10 +17,7 @@ interface BrainToolInput {
     max_chars?: number;  // FIX 5: optional char limit for inline read
 }
 
-// Brain header for visual feedback (compact version)
-const BRAIN_HEADER = `🧠 ══════════════════════════════════════
-        O B S I D I A N   B R A I N  v2.9
-══════════════════════════════════════ 🧠`;
+const BRAIN_HEADER = '\u{1F9E0}';
 
 /**
  * BrainTool provides a global knowledge store using an Obsidian vault.
@@ -29,11 +26,14 @@ const BRAIN_HEADER = `🧠 ═════════════════�
 export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
     private filesystemBackend: FilesystemBackend;
     private indexer: VaultIndexer;
-    private mcpAvailable: boolean | null = null;
     // FIX 4: hash-dedup set for quick_note (session-scoped)
     private seenHashes = new Set<number>();
     // FIX 7+10: operation counter for auto-checkpoint reminders (every 12 ops)
     private operationCount = 0;
+    private saveCount = 0;
+    private saveActivity: string[] = [];
+    private checkpointWrite: Promise<void> = Promise.resolve();
+    private operationQueue: Promise<void> = Promise.resolve();
 
     constructor(private context: vscode.ExtensionContext) {
         this.filesystemBackend = new FilesystemBackend();
@@ -43,17 +43,39 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
     /**
      * Initialize the indexer - call this on extension activation
      */
+    private runExclusive<T>(action: () => Promise<T>): Promise<T> {
+        const result = this.operationQueue.then(action);
+        this.operationQueue = result.then(() => {}, () => {});
+        return result;
+    }
+
     async initialize(): Promise<void> {
+        return this.runExclusive(() => this.synchronizeVault());
+    }
+
+    private async synchronizeVault(): Promise<void> {
+        const desired = configuredVaultPath();
+        if (this.filesystemBackend.getVaultPath() !== desired) {
+            // Finish saves to the old vault before changing either backend.
+            await this.checkpointWrite;
+            await this.indexer.dispose();
+            this.filesystemBackend.refreshVaultPath(desired);
+            this.indexer = new VaultIndexer(desired);
+            this.seenHashes.clear();
+            this.saveCount = 0;
+            this.saveActivity = [];
+        }
         await this.indexer.initialize();
     }
-    
-    /**
-     * Force rebuild the entire index
-     */
+
+    /** Force rebuild without racing tool writes or a vault switch. */
     async rebuildIndex(): Promise<void> {
-        await this.indexer.rebuildIndex();
+        return this.runExclusive(async () => {
+            await this.synchronizeVault();
+            await this.indexer.rebuildIndex();
+        });
     }
-    
+
     /**
      * Get indexer statistics
      */
@@ -61,22 +83,68 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         return this.indexer.getStats();
     }
 
+    async dispose(): Promise<void> {
+        await this.operationQueue;
+        await this.checkpointWrite;
+        await this.indexer.dispose();
+    }
+
     /**
-     * Check if Obsidian MCP is available
+     * Record only completed saves. Checkpoint writes deliberately bypass this method.
      */
+    private async recordSave(operation: string, filepath: string): Promise<void> {
+        this.saveCount++;
+        this.saveActivity.push(`${new Date().toISOString()} ${operation} ${filepath.replace(/[\r\n]/g, ' ')}`);
+        this.saveActivity = this.saveActivity.slice(-20);
+        if (this.saveCount % 3 !== 0) return;
+        const checkpoint = `## ${new Date().toISOString()} — Checkpoint\n\nSave count: ${this.saveCount}\n\nRecent save activity (up to 20):\n${this.saveActivity.map(a => '- ' + a).join('\n')}\n`;
+        this.checkpointWrite = this.checkpointWrite.then(async () => {
+            try {
+                const logPath = '_Inbox/session-activity-log.md';
+                await this.filesystemBackend.appendFile(logPath, checkpoint);
+                await this.indexer.indexFileImmediately(logPath);
+            } catch (error) {
+                console.log('[ObsidianBrain] Could not persist activity checkpoint:', error);
+            }
+        });
+        await this.checkpointWrite;
+    }
+
+    /**
+     * Preserve overwritten content as an indexed historical note.
+     */
+    private async archiveSuperseded(filepath: string, replacement: string): Promise<void> {
+        if (!(await this.filesystemBackend.exists(filepath))) return;
+        const previous = await this.filesystemBackend.readFile(filepath);
+        if (previous === replacement) return;
+        const clean = normalizeNotePath(filepath);
+        if (clean.startsWith('_Archive/')) return;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const suffix = Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+        const archived = `_Archive/${clean.replace(/\.md$/, '')}-${timestamp}-${suffix}.md`;
+        await this.filesystemBackend.writeFile(archived, previous);
+        await this.indexer.indexFileImmediately(archived);
+    }
+
+    private resultLimit(limit: number | undefined, fallback: number): number {
+        return limit !== undefined && Number.isFinite(limit) && limit > 0 ? Math.max(1, Math.floor(limit)) : fallback;
+    }
+
+    async checkConnection(): Promise<boolean> {
+        return this.runExclusive(async () => {
+            try {
+                await this.synchronizeVault();
+                const stat = await vscode.workspace.fs.stat(vscode.Uri.file(this.filesystemBackend.getVaultPath()));
+                return (stat.type & vscode.FileType.Directory) !== 0;
+            } catch {
+                return false;
+            }
+        });
+    }
+
+    /** Kept for callers using the previous connection-check API. */
     async checkObsidianMcpConnection(): Promise<boolean> {
-        try {
-            // Check if MCP tools are available by looking for obsidian tools
-            const tools = await vscode.lm.tools;
-            const obsidianTools = tools.filter(t => 
-                t.name.includes('obsidian') || t.name.includes('mcp_mcp-obsidian')
-            );
-            this.mcpAvailable = obsidianTools.length > 0;
-            return this.mcpAvailable;
-        } catch {
-            this.mcpAvailable = false;
-            return false;
-        }
+        return this.checkConnection();
     }
 
     // FIX 3+9: Auto-routing helper — routes quick_note content to correct vault directory
@@ -120,6 +188,13 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         options: vscode.LanguageModelToolInvocationOptions<BrainToolInput>,
         token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
+        return this.runExclusive(() => this.invokeOperation(options, token));
+    }
+
+    private async invokeOperation(
+        options: vscode.LanguageModelToolInvocationOptions<BrainToolInput>,
+        token: vscode.CancellationToken
+    ): Promise<vscode.LanguageModelToolResult> {
         // FIX 5: added max_chars to destructuring
         const { operation, query, filepath, content, directory, old_str, new_str, insert_line, destination, limit, apply_tags, max_chars } = options.input;
         // FIX 7+10: increment and track operation count
@@ -127,7 +202,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
 
         try {
             // Refresh vault path in case settings changed
-            this.filesystemBackend.refreshVaultPath();
+            await this.synchronizeVault();
 
             let result: string;
 
@@ -136,7 +211,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
                     if (!query) {
                         return this.errorResult('Search operation requires a query parameter');
                     }
-                    result = await this.handleSearch(query);
+                    result = await this.handleSearch(query, this.resultLimit(limit, 15));
                     break;
 
                 case 'list':
@@ -208,7 +283,13 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
                     break;
 
                 case 'list_recent':
-                    result = await this.handleListRecent(limit || 10);
+                    result = await this.handleListRecent(this.resultLimit(limit, 10));
+                    break;
+
+                case 'related_notes':
+                    if (!filepath) return this.errorResult('related_notes operation requires a filepath parameter');
+                    await this.indexer.initialize();
+                    result = this.handleRelatedNotes(filepath, this.resultLimit(limit, 10));
                     break;
 
                 case 'auto_tag':
@@ -222,10 +303,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
                     return this.errorResult(`Unknown operation: ${operation}`);
             }
 
-            // FIX 7+10: auto-checkpoint reminder every 12 operations
-            if (this.operationCount % 12 === 0) {
-                result += `\n\n⚠️ AUTO-CHECKPOINT REMINDER (#${this.operationCount} ops this session): Save progress now → obsidian_brain(operation="quick_note", content="Checkpoint: [summary]") to prevent context loss.`;
-            }
+            result += this.saveReminder();
 
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(result)
@@ -283,6 +361,9 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
             case 'list_recent':
                 message = `${brain} Listing recently modified notes...`;
                 break;
+            case 'related_notes':
+                message = `${brain} Finding related notes: ${filepath}`;
+                break;
             case 'auto_tag':
                 message = `${brain} Analyzing and suggesting tags for: ${filepath}`;
                 break;
@@ -295,9 +376,9 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         };
     }
 
-    private async handleSearch(query: string): Promise<string> {
+    private async handleSearch(query: string, shown: number): Promise<string> {
         // Use VaultIndexer for fast search
-        const results: IndexSearchResult[] = await this.indexer.search(query);
+        const results: IndexSearchResult[] = await this.indexer.search(query, Math.max(shown, 20));
 
         if (results.length === 0) {
             return `${BRAIN_HEADER}\n🔍 No results found for "${query}" in the Obsidian vault.\n\n💡 Tip: Try different keywords, or use #tag to search by tag.`;
@@ -311,13 +392,13 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         }
         output += `:\n\n`;
 
-        for (const result of results.slice(0, 15)) {
+        for (const result of results.slice(0, shown)) {
             const scoreBar = '█'.repeat(Math.min(Math.ceil(result.score / 2), 5));
             output += `## ${result.title}\n`;
             output += `📁 ${result.filepath}\n`;
             output += `📊 Score: ${result.score.toFixed(1)} ${scoreBar} | Match: ${result.matchType}\n`;
             if (result.tags && result.tags.length > 0) {
-                output += `🏷️ Tags: ${result.tags.map(t => '#' + t).join(', ')}\n`;
+                output += `🏷️ Tags: ${result.tags.slice(0, 8).map(t => '#' + t).join(', ')}${result.tags.length > 8 ? ` (+${result.tags.length - 8} more)` : ''}\n`;
             }
             if (result.context) {
                 output += `📝 "${result.context}"\n`;
@@ -327,8 +408,8 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
             output += '\n';
         }
 
-        if (results.length > 15) {
-            output += `\n... and ${results.length - 15} more results.`;
+        if (results.length > shown) {
+            output += `\n... and ${results.length - shown} more results.`;
         }
 
         // Add search tips
@@ -368,25 +449,22 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         return output;
     }
 
-    // FIX 5+11: inline read with AUTO_CAP=7000 and optional max_chars limit
     private async handleRead(filepath: string, max_chars?: number): Promise<string> {
-        const AUTO_CAP = 7000;
+        if (max_chars !== undefined && (!Number.isFinite(max_chars) || max_chars < 1)) {
+            throw new Error('max_chars must be a positive numeric character cap');
+        }
+        const cap = max_chars === undefined ? 7000 : Math.floor(max_chars);
         const content = await this.filesystemBackend.readFile(filepath);
-        if (max_chars !== undefined) {
-            const truncated = content.slice(0, max_chars);
-            return `${BRAIN_HEADER}\n📖 Reading: ${filepath} (first ${max_chars} chars)\n${'\u2500'.repeat(40)}\n\n${truncated}`;
-        }
-        if (content.length <= AUTO_CAP) {
-            return `${BRAIN_HEADER}\n📖 Reading: ${filepath}\n${'\u2500'.repeat(40)}\n\n${content}`;
-        }
-        // FIX 11: large files always return inline (never temp-file), truncated with warning
-        return `${BRAIN_HEADER}\n📖 Reading: ${filepath} (truncated at ${AUTO_CAP} chars — use max_chars to read more)\n${'\u2500'.repeat(40)}\n\n${content.slice(0, AUTO_CAP)}\n\n⚠️ Content truncated. Pass max_chars=N to read more.`;
+        const truncated = content.length > cap;
+        return `${BRAIN_HEADER}\n📖 Reading: ${filepath}${truncated ? ` (truncated at ${cap} of ${content.length} chars)` : ''}\n${'─'.repeat(40)}\n\n${content.slice(0, cap)}${truncated ? '\n\n⚠️ Content truncated. Pass a larger explicit max_chars to read more (default cap: 7000).' : ''}`;
     }
 
     private async handleWrite(filepath: string, content: string): Promise<string> {
+        await this.archiveSuperseded(filepath, content);
         await this.filesystemBackend.writeFile(filepath, content);
         // Immediately update index for instant searchability
         await this.indexer.indexFileImmediately(filepath);
+        await this.recordSave('write', filepath);
         return `${BRAIN_HEADER}\n✅ Successfully wrote to "${filepath}"\n\n💾 Knowledge persisted to your brain! (indexed ⚡)`;
     }
 
@@ -394,6 +472,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         await this.filesystemBackend.appendFile(filepath, content);
         // Immediately update index for instant searchability
         await this.indexer.indexFileImmediately(filepath);
+        await this.recordSave('append', filepath);
         return `${BRAIN_HEADER}\n✅ Successfully appended to "${filepath}"\n\n🧠 Memory updated! (indexed ⚡)`;
     }
 
@@ -418,9 +497,14 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         const dateStr = now.toISOString().split('T')[0];
         const timeStr = now.toTimeString().split(' ')[0].substring(0, 5);
         const formattedContent = `## ${dateStr} ${timeStr}\n\n${content}\n`;
-        await this.filesystemBackend.writeFile(filename, formattedContent);
-        // Immediately update index for instant searchability
-        await this.indexer.indexFileImmediately(filename);
+        try {
+            await this.filesystemBackend.writeFile(filename, formattedContent);
+            await this.indexer.indexFileImmediately(filename);
+        } catch (error) {
+            this.seenHashes.delete(hash);
+            throw error;
+        }
+        await this.recordSave('quick_note', filename);
         const routeMsg = dir !== '_Inbox' ? `\n📂 Auto-routed to ${dir}/ based on content.` : '';
         return `${BRAIN_HEADER}\n✅ Quick note saved to "${filename}"${routeMsg}\n\n💡 Tip: Use brain-manager to organize _Inbox notes into proper directories. (indexed ⚡)`;
     }
@@ -437,9 +521,10 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         // Replace first occurrence
         const newContent = currentContent.replace(oldStr, newStr);
         
+        await this.archiveSuperseded(filepath, newContent);
         await this.filesystemBackend.writeFile(filepath, newContent);
-        // Immediately update index for instant searchability
         await this.indexer.indexFileImmediately(filepath);
+        await this.recordSave('str_replace', filepath);
         return `${BRAIN_HEADER}\n✅ Successfully updated "${filepath}"\n\n🔄 Brain synced! (indexed ⚡)`;
     }
 
@@ -447,10 +532,12 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         let currentContent: string;
         try {
             currentContent = await this.filesystemBackend.readFile(filepath);
-        } catch {
+        } catch (error) {
+            if (!isFileNotFound(error)) throw error;
             // File doesn't exist, create with just the content
             await this.filesystemBackend.writeFile(filepath, content);
             await this.indexer.indexFileImmediately(filepath);
+            await this.recordSave('insert', filepath);
             return `${BRAIN_HEADER}\n✅ Created "${filepath}" with content\n\n🆕 New memory created! (indexed ⚡)`;
         }
         
@@ -463,6 +550,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         const newContent = lines.join('\n');
         await this.filesystemBackend.writeFile(filepath, newContent);
         await this.indexer.indexFileImmediately(filepath);
+        await this.recordSave('insert', filepath);
         return `${BRAIN_HEADER}\n✅ Inserted content at line ${lineNumber} in "${filepath}"\n\n📝 Brain updated! (indexed ⚡)`;
     }
 
@@ -495,14 +583,8 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         // Extract headings for structure
         const headings = lines.filter(line => line.match(/^#{1,6}\s+/));
         
-        // Extract tags
-        const tagRegex = /#([a-zA-Z][a-zA-Z0-9_-]*)/g;
-        const tags = new Set<string>();
-        let match;
-        while ((match = tagRegex.exec(content))) {
-            tags.add(match[1]);
-        }
-        
+        const tags = this.indexer.extractTags(content);
+
         // Extract key points (lines starting with - or *)
         const bulletPoints = lines.filter(line => line.match(/^\s*[-*]\s+/)).slice(0, 5);
         
@@ -533,8 +615,8 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         output += `**📊 Stats:** ${wordCount} words | ${lines.length} lines | ${paragraphs} paragraphs\n\n`;
         
         // Tags
-        if (tags.size > 0) {
-            output += `**🏷️ Tags:** ${Array.from(tags).map(t => '#' + t).join(' ')}\n\n`;
+        if (tags.length > 0) {
+            output += `**🏷️ Tags:** ${tags.map(t => '#' + t).join(' ')}\n\n`;
         }
         
         // Structure (headings)
@@ -575,6 +657,17 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         return output;
     }
 
+    private handleRelatedNotes(filepath: string, limit: number): string {
+        const source = this.indexer.getFileInfo(filepath);
+        if (!source) return `${BRAIN_HEADER}\n❌ Note not found in the index: ${filepath}`;
+        if (source.tags.length === 0) return `${BRAIN_HEADER}\nNo related notes: "${filepath}" has no tags.`;
+        const related = this.indexer.getRelatedNotes(filepath, limit);
+        if (!related.length) return `${BRAIN_HEADER}\nNo related notes share tags with "${filepath}".`;
+        return `${BRAIN_HEADER}\nRelated notes for "${filepath}":\n\n` + related.map(note =>
+            `## ${note.title}\n📁 ${note.filepath} (${note.filename})\nScore: ${note.score.toFixed(3)} | Shared tags: ${note.sharedTags.map(t => '#' + t).join(', ')}`
+        ).join('\n\n');
+    }
+
     private async handleListRecent(limit: number): Promise<string> {
         // Get all indexed files sorted by modification time
         const recentFiles = this.indexer.getRecentFiles(limit);
@@ -608,14 +701,8 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
     private async handleAutoTag(filepath: string, applyTags: boolean): Promise<string> {
         const content = await this.filesystemBackend.readFile(filepath);
         
-        // Existing tags
-        const existingTags = new Set<string>();
-        const tagRegex = /#([a-zA-Z][a-zA-Z0-9_-]*)/g;
-        let match;
-        while ((match = tagRegex.exec(content))) {
-            existingTags.add(match[1].toLowerCase());
-        }
-        
+        const existingTags = new Set(this.indexer.extractTags(content).map(t => t.toLowerCase()));
+
         // Analyze content and suggest tags
         const suggestedTags = this.analyzeContentForTags(content);
         
@@ -791,9 +878,15 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         });
     }
 
+    private saveReminder(): string {
+        return this.operationCount > 0 && this.operationCount % 12 === 0
+            ? `\n\n⚠️ AUTO-CHECKPOINT REMINDER (#${this.operationCount} ops this session): Save useful progress → obsidian_brain(operation="quick_note", content="Progress: [facts and next steps]").`
+            : '';
+    }
+
     private errorResult(message: string): vscode.LanguageModelToolResult {
         return new vscode.LanguageModelToolResult([
-            new vscode.LanguageModelTextPart(`${BRAIN_HEADER}\n❌ Error: ${message}`)
+            new vscode.LanguageModelTextPart(`${BRAIN_HEADER}\n❌ Error: ${message}${this.saveReminder()}`)
         ]);
     }
 }

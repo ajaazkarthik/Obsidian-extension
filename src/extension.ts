@@ -1,15 +1,16 @@
 import * as vscode from 'vscode';
 import { BrainTool } from './brainTool.js';
-import { FilesystemTool } from './filesystemTool.js';
-import { ChatHistoryTool } from './chatHistoryTool.js';
-import { MemoryTool } from './memoryTool.js';
+import { configuredVaultPath } from './filesystemBackend.js';
+
+let activeBrainTool: BrainTool | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('[ObsidianBrain] Extension activating...');
 
     // Register Brain Tool and initialize indexer
     const brainTool = new BrainTool(context);
-    context.subscriptions.push(vscode.lm.registerTool('obsidian_brain', brainTool));
+    activeBrainTool = brainTool;
+    context.subscriptions.push(vscode.lm.registerTool('obsidian_brain', brainTool), brainTool);
     console.log('[ObsidianBrain] Registered obsidian_brain tool');
     
     // Initialize the brain indexer in background (don't block activation)
@@ -19,37 +20,37 @@ export function activate(context: vscode.ExtensionContext) {
         console.error('[ObsidianBrain] Failed to initialize indexer:', err);
     });
 
-    // Register Memory Tool (workspace-scoped memory within vault)
-    const memoryTool = new MemoryTool(context);
-    context.subscriptions.push(vscode.lm.registerTool('memory', memoryTool));
-    console.log('[ObsidianBrain] Registered memory tool');
+    context.subscriptions.push(
+        vscode.commands.registerCommand('obsidianBrain.configureVault', async () => {
+            const folders = await vscode.window.showOpenDialog({canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Obsidian Vault'});
+            if (!folders?.[0]) return;
+            const config = vscode.workspace.getConfiguration('obsidianBrain');
+            const existing = config.inspect<string>('vaultPath');
+            const target = existing?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+                : existing?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+            await config.update('vaultPath', folders[0].fsPath, target);
+            try {
+                await brainTool.initialize();
+                vscode.window.showInformationMessage(`✅ Obsidian vault configured: ${folders[0].fsPath}`);
+            } catch (error) {
+                vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
+            }
+        })
+    );
 
-    // Register Filesystem Tool
-    const filesystemTool = new FilesystemTool(context);
-    context.subscriptions.push(vscode.lm.registerTool('integrated_filesystem', filesystemTool));
-    console.log('[ObsidianBrain] Registered integrated_filesystem tool');
-
-    // Register Chat History Tool
-    const chatHistoryTool = new ChatHistoryTool(context);
-    context.subscriptions.push(vscode.lm.registerTool('chat_history', chatHistoryTool));
-    console.log('[ObsidianBrain] Registered chat_history tool');
-
-    // Command: Check Obsidian MCP Connection
+    // Command: Check the configured vault through the native I/O backend.
     context.subscriptions.push(
         vscode.commands.registerCommand('obsidianBrain.checkConnection', async () => {
-            const isConnected = await brainTool.checkObsidianMcpConnection();
+            const isConnected = await brainTool.checkConnection();
             if (isConnected) {
-                vscode.window.showInformationMessage('✅ Obsidian MCP is connected and ready!');
+                vscode.window.showInformationMessage('✅ Obsidian vault is accessible and ready!');
             } else {
                 const selection = await vscode.window.showWarningMessage(
-                    '⚠️ Obsidian MCP is not available. Using filesystem fallback.',
-                    'Reload Window',
+                    '⚠️ Obsidian vault is not accessible. Check the configured vault path.',
                     'Open Settings'
                 );
-                if (selection === 'Reload Window') {
-                    vscode.commands.executeCommand('workbench.action.reloadWindow');
-                } else if (selection === 'Open Settings') {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'obsidianBrain');
+                if (selection === 'Open Settings') {
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'obsidianBrain.vaultPath');
                 }
             }
         })
@@ -58,8 +59,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Command: Open Obsidian Vault
     context.subscriptions.push(
         vscode.commands.registerCommand('obsidianBrain.openVault', async () => {
-            const config = vscode.workspace.getConfiguration('obsidianBrain');
-            const vaultPath = config.get<string>('vaultPath') || 'C:\\workspace\\obsidian-vault';
+            let vaultPath: string;
+            try { vaultPath = configuredVaultPath(); } catch (error) {
+                vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
+                return;
+            }
             
             const uri = vscode.Uri.file(vaultPath);
             
@@ -118,76 +122,15 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Command: Show Allowed Directories
-    context.subscriptions.push(
-        vscode.commands.registerCommand('obsidianBrain.showAllowedDirectories', async () => {
-            const dirs = filesystemTool.getAllowedDirectories();
-            const uniqueDirs = [...new Set(dirs)].sort();
-            
-            const items = uniqueDirs.map(dir => ({
-                label: dir,
-                description: ''
-            }));
-
-            const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: 'Allowed directories for integrated_filesystem tool',
-                canPickMany: false
-            });
-
-            if (selected) {
-                const uri = vscode.Uri.file(selected.label);
-                try {
-                    await vscode.workspace.fs.stat(uri);
-                    vscode.commands.executeCommand('revealFileInOS', uri);
-                } catch {
-                    vscode.window.showWarningMessage(`Directory does not exist: ${selected.label}`);
-                }
-            }
-        })
-    );
-
-    // Command: Search Chat History
-    context.subscriptions.push(
-        vscode.commands.registerCommand('obsidianBrain.searchChatHistory', async () => {
-            const query = await vscode.window.showInputBox({
-                placeHolder: 'Enter search query',
-                prompt: 'Search through your VS Code chat history'
-            });
-
-            if (query) {
-                const results = await chatHistoryTool.search(query);
-                
-                // Show results in output channel
-                const outputChannel = vscode.window.createOutputChannel('Chat History Search');
-                outputChannel.clear();
-                outputChannel.appendLine(results);
-                outputChannel.show();
-            }
-        })
-    );
-
-    // Command: Get Chat Stats
-    context.subscriptions.push(
-        vscode.commands.registerCommand('obsidianBrain.getChatStats', async () => {
-            const stats = await chatHistoryTool.getStats();
-            
-            // Show stats in output channel
-            const outputChannel = vscode.window.createOutputChannel('Chat History Statistics');
-            outputChannel.clear();
-            outputChannel.appendLine(stats);
-            outputChannel.show();
-        })
-    );
-
     // Command: Rebuild Brain Index
     context.subscriptions.push(
         vscode.commands.registerCommand('obsidianBrain.rebuildIndex', async () => {
-            vscode.window.withProgress({
+            await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: 'Rebuilding brain index...',
                 cancellable: false
             }, async () => {
-                await brainTool.initialize();
+                await brainTool.rebuildIndex();
                 vscode.window.showInformationMessage('✅ Brain index rebuilt successfully');
             });
         })
@@ -196,6 +139,8 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('[ObsidianBrain] Extension activated successfully!');
 }
 
-export function deactivate() {
+export async function deactivate(): Promise<void> {
+    await activeBrainTool?.dispose();
+    activeBrainTool = undefined;
     console.log('[ObsidianBrain] Extension deactivated');
 }

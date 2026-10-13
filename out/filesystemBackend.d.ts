@@ -1,10 +1,14 @@
-/**
- * FilesystemBackend provides direct filesystem access to the Obsidian vault
- * using VS Code's workspace.fs API. This is used as a fallback when Obsidian MCP is unavailable.
- */
+/** Resolve configuration on the extension host (including remote hosts). */
+export declare function resolveVaultPath(configured: string | undefined, platform?: NodeJS.Platform, home?: string): string;
+export declare function configuredVaultPath(): string;
+export declare function normalizeNotePath(filepath: string): string;
+/** VS Code and Node-based harnesses use different missing-file error codes. */
+export declare function isFileNotFound(error: unknown): boolean;
+/** Create only the automatic default; explicit vaults must already be accessible. */
+export declare function prepareVault(vaultPath: string): Promise<void>;
+/** Native vault I/O shared by the tool and indexer on every supported platform. */
 export declare class FilesystemBackend {
     private vaultPath;
-    constructor();
     /**
      * Get the current vault path
      */
@@ -12,7 +16,7 @@ export declare class FilesystemBackend {
     /**
      * Refresh the vault path from settings
      */
-    refreshVaultPath(): void;
+    refreshVaultPath(vaultPath?: string): void;
     /**
      * Resolve a relative path within the vault to an absolute path
      */

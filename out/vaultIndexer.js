@@ -33,30 +33,50 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VaultIndexer = void 0;
+exports.VaultIndexer = exports.CACHE_VERSION = void 0;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("path"));
+const filesystemBackend_js_1 = require("./filesystemBackend.js");
+exports.CACHE_VERSION = 3;
 class VaultIndexer {
+    configuredPath;
     index = null;
     vaultPath = '';
     watcher;
     indexing = false;
     initialized = false;
     debounceTimers = new Map();
-    constructor() {
-        this.refreshVaultPath();
+    initialization;
+    cacheSaveTimer;
+    cacheDirty = false;
+    cacheWrite = Promise.resolve();
+    pendingUpdates = new Set();
+    disposed = false;
+    constructor(configuredPath) {
+        this.configuredPath = configuredPath;
     }
     refreshVaultPath() {
-        const config = vscode.workspace.getConfiguration('obsidianBrain');
-        this.vaultPath = config.get('vaultPath') || 'C:\\workspace\\obsidian-vault';
+        this.vaultPath = this.configuredPath ?? (0, filesystemBackend_js_1.configuredVaultPath)();
     }
     /**
      * Initialize the index - call this on extension activation
      */
     async initialize() {
-        if (this.initialized)
+        if (this.disposed || this.initialized)
             return;
+        if (!this.initialization)
+            this.initialization = this.initializeIndex();
+        try {
+            await this.initialization;
+        }
+        catch (error) {
+            this.initialization = undefined;
+            throw error;
+        }
+    }
+    async initializeIndex() {
         this.refreshVaultPath();
+        await (0, filesystemBackend_js_1.prepareVault)(this.vaultPath);
         // Try to load from cache
         const cached = await this.loadFromCache();
         if (cached && cached.vaultPath === this.vaultPath) {
@@ -69,7 +89,8 @@ class VaultIndexer {
             await this.rebuildIndex();
         }
         // Start file watcher
-        this.startWatcher();
+        if (!this.disposed)
+            this.startWatcher();
         this.initialized = true;
     }
     /**
@@ -98,7 +119,7 @@ class VaultIndexer {
         if (!this.index)
             return null;
         // Normalize filepath (remove leading slash if present)
-        const normalizedPath = filepath.startsWith('/') ? filepath.slice(1) : filepath;
+        const normalizedPath = (0, filesystemBackend_js_1.normalizeNotePath)(filepath);
         return this.index.files.get(normalizedPath) || null;
     }
     /**
@@ -123,6 +144,7 @@ class VaultIndexer {
         // Update stats
         if (this.index) {
             this.index.lastUpdated = Date.now();
+            this.scheduleCacheSave();
         }
     }
     /**
@@ -132,6 +154,7 @@ class VaultIndexer {
         this.removeFromIndex(filepath);
         if (this.index) {
             this.index.lastUpdated = Date.now();
+            this.scheduleCacheSave();
         }
     }
     /**
@@ -213,16 +236,17 @@ class VaultIndexer {
                 }
                 // Word index match (content contains word)
                 else if (this.index.wordIndex.get(token)?.has(filepath)) {
-                    // FIX 1: IDF-weighted scoring — rare words rank higher than common words
                     const wordFiles = this.index.wordIndex.get(token);
-                    const idf = Math.log((totalFiles + 1) / ((wordFiles?.size || 1) + 1)) / Math.log(totalFiles + 2);
-                    score += Math.max(0.5, idf * 2);
+                    const idf = Math.log((totalFiles + 1) / (wordFiles.size + 1)) / Math.log(totalFiles + 2);
+                    score += Math.max(0.5, idf * Math.log(1 + wordFiles.get(filepath)));
                     matchType = 'content';
                 }
             }
-            // FIX 2: Recency boost — recent notes float above older same-content notes (7-day half-life)
-            const ageDays = (Date.now() - (file.modified || 0)) / 86400000;
-            score += Math.max(0, 1.5 * Math.exp(-ageDays / 7));
+            // Recency orders matching notes; it must not create unrelated hits.
+            if (score === 0)
+                continue;
+            const ageDays = Math.max(0, (Date.now() - file.modified) / 86400000);
+            score += ageDays < 1 / 24 ? 3 : ageDays < 1 ? 2 : Math.max(0, 1.5 * Math.exp(-ageDays / 7));
             // FIX 14: _Archive/ penalty — superseded content buried 95% below live notes
             if (filepath.startsWith('_Archive/') || filepath.startsWith('_Archive\\')) {
                 score *= 0.05;
@@ -257,10 +281,11 @@ class VaultIndexer {
      * Full index rebuild
      */
     async rebuildIndex() {
-        this.indexing = true;
         this.refreshVaultPath();
+        await (0, filesystemBackend_js_1.prepareVault)(this.vaultPath);
+        this.indexing = true;
         this.index = {
-            version: 1,
+            version: exports.CACHE_VERSION,
             vaultPath: this.vaultPath,
             lastUpdated: Date.now(),
             files: new Map(),
@@ -302,7 +327,7 @@ class VaultIndexer {
                     try {
                         const uri = vscode.Uri.file(path.join(this.vaultPath, filepath));
                         const stat = await vscode.workspace.fs.stat(uri);
-                        if (stat.mtime > existing.modified) {
+                        if (stat.mtime !== existing.modified) {
                             await this.indexFile(filepath);
                         }
                     }
@@ -373,6 +398,7 @@ class VaultIndexer {
     async indexFile(filepath) {
         if (!this.index)
             return;
+        filepath = (0, filesystemBackend_js_1.normalizeNotePath)(filepath);
         try {
             const fullPath = path.join(this.vaultPath, filepath);
             const uri = vscode.Uri.file(fullPath);
@@ -399,6 +425,7 @@ class VaultIndexer {
                 headings,
                 links,
                 firstLine,
+                bodyWordCount: words.filter(w => w.length >= 3).length,
                 wordCount: words.length
             };
             // Remove old entry from indexes if exists
@@ -413,15 +440,14 @@ class VaultIndexer {
                 }
                 this.index.tagIndex.get(tagLower).add(filepath);
             }
-            // Add to word index (for fast content search)
-            // Only index unique significant words to save memory
-            const uniqueWords = new Set(words.filter(w => w.length >= 3));
-            for (const word of uniqueWords) {
-                if (!this.index.wordIndex.has(word)) {
-                    this.index.wordIndex.set(word, new Set());
-                }
-                this.index.wordIndex.get(word).add(filepath);
+            // Keep term frequency for body relevance and lossless persistence.
+            for (const word of words.filter(w => w.length >= 3)) {
+                if (!this.index.wordIndex.has(word))
+                    this.index.wordIndex.set(word, new Map());
+                const postings = this.index.wordIndex.get(word);
+                postings.set(filepath, (postings.get(filepath) || 0) + 1);
             }
+            this.index.lastUpdated = Date.now();
         }
         catch (error) {
             // File might not exist or be readable
@@ -434,6 +460,7 @@ class VaultIndexer {
     removeFromIndex(filepath) {
         if (!this.index)
             return;
+        filepath = (0, filesystemBackend_js_1.normalizeNotePath)(filepath);
         const existing = this.index.files.get(filepath);
         if (existing) {
             // Remove from tag index
@@ -444,8 +471,11 @@ class VaultIndexer {
                     this.index.tagIndex.delete(tagLower);
                 }
             }
-            // Remove from word index would be expensive, skip for now
-            // Words will be cleaned up on full rebuild
+            for (const [word, postings] of this.index.wordIndex) {
+                postings.delete(filepath);
+                if (postings.size === 0)
+                    this.index.wordIndex.delete(word);
+            }
             this.index.files.delete(filepath);
         }
     }
@@ -466,7 +496,7 @@ class VaultIndexer {
     onFileCreated(uri) {
         const filepath = this.getRelativePath(uri);
         if (filepath && !filepath.startsWith('.')) {
-            this.indexFile(filepath).then(() => this.saveToCache());
+            this.trackUpdate(this.indexFile(filepath).then(() => this.scheduleCacheSave()));
         }
     }
     onFileChanged(uri) {
@@ -477,23 +507,21 @@ class VaultIndexer {
         if (this.debounceTimers.has(filepath)) {
             clearTimeout(this.debounceTimers.get(filepath));
         }
-        this.debounceTimers.set(filepath, setTimeout(async () => {
-            await this.indexFile(filepath);
-            await this.saveToCache();
+        this.debounceTimers.set(filepath, setTimeout(() => {
             this.debounceTimers.delete(filepath);
+            this.trackUpdate(this.indexFile(filepath).then(() => this.scheduleCacheSave()));
         }, 500));
     }
     onFileDeleted(uri) {
         const filepath = this.getRelativePath(uri);
         if (filepath) {
-            this.removeFromIndex(filepath);
-            this.saveToCache();
+            this.removeFileImmediately(filepath);
         }
     }
     getRelativePath(uri) {
-        const fullPath = uri.fsPath;
-        if (fullPath.startsWith(this.vaultPath)) {
-            return fullPath.slice(this.vaultPath.length + 1).replace(/\\/g, '/');
+        const relative = path.relative(this.vaultPath, uri.fsPath);
+        if (relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+            return relative.replace(/\\/g, '/');
         }
         return null;
     }
@@ -506,31 +534,53 @@ class VaultIndexer {
         // Fall back to filename without extension
         return filename.replace(/\.md$/, '');
     }
+    /** Canonical tags shared by indexing, summaries and auto-tag analysis. */
     extractTags(content) {
-        const tags = new Set();
-        // Extract #tags from content
-        const tagRegex = /#([a-zA-Z][a-zA-Z0-9_-]*)/g;
-        let match;
-        while ((match = tagRegex.exec(content))) {
-            tags.add(match[1]);
+        const tags = new Map();
+        const add = (raw) => {
+            const tag = raw.trim().replace(/^(['"])(.*)\1$/, '$2').trim().replace(/^#/, '').trim();
+            if (tag && !tags.has(tag.toLowerCase()))
+                tags.set(tag.toLowerCase(), tag);
+        };
+        const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+        if (frontmatter) {
+            const yaml = frontmatter[1];
+            const array = yaml.match(/^tags:[ \t]*\[([^\]]*)\][ \t]*\r?$/m);
+            if (array)
+                array[1].split(',').forEach(add);
+            const list = yaml.match(/^tags:[ \t]*\r?\n((?:[ \t]*-[ \t]*[^\r\n]*(?:\r?\n|$))+)/m);
+            if (list)
+                for (const line of list[1].split(/\r?\n/)) {
+                    const item = line.match(/^[ \t]*-[ \t]*(.*)$/);
+                    if (item)
+                        add(item[1]);
+                }
         }
-        // Also check YAML frontmatter
-        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (frontmatterMatch) {
-            const yamlContent = frontmatterMatch[1];
-            const tagsMatch = yamlContent.match(/tags:\s*\[([^\]]+)\]/);
-            if (tagsMatch) {
-                tagsMatch[1].split(',').forEach(t => tags.add(t.trim().replace(/['"]/g, '')));
+        // Strip fenced blocks (including unclosed fences), then inline code spans.
+        let fence;
+        const body = content.slice(frontmatter?.[0].length || 0).split(/\r?\n/).map(line => {
+            const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+            if (fence) {
+                if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim())
+                    fence = undefined;
+                return '';
             }
-            // Also handle tags as list
-            const tagsListMatch = yamlContent.match(/tags:\s*\n((?:\s*-\s*.+\n?)+)/);
-            if (tagsListMatch) {
-                tagsListMatch[1].match(/-\s*(.+)/g)?.forEach(t => {
-                    tags.add(t.replace(/^-\s*/, '').trim().replace(/['"]/g, ''));
-                });
+            if (marker) {
+                fence = { char: marker[1][0], length: marker[1].length };
+                return '';
             }
+            return line;
+        }).join('\n').replace(/(`+)[\s\S]*?\1(?!`)/g, '');
+        const inline = /(?:^|[\s(\[])#([a-zA-Z][a-zA-Z0-9_-]*)/gm;
+        for (const match of body.matchAll(inline)) {
+            const tag = match[1];
+            if (tag.length < 2 || /^L\d+(?:-L?\d+)?$/i.test(tag))
+                continue;
+            if (/^(?:[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$/.test(tag) && /\d/.test(tag))
+                continue;
+            add(tag);
         }
-        return Array.from(tags);
+        return [...tags.values()];
     }
     extractHeadings(content) {
         const headings = [];
@@ -580,7 +630,49 @@ class VaultIndexer {
         return text
             .toLowerCase()
             .split(/[^a-z0-9]+/)
-            .filter(word => word.length >= 2);
+            .filter(word => word.length >= 2)
+            .map(word => this.stem(word));
+    }
+    stem(word) {
+        if (word.length <= 4)
+            return word;
+        const suffixes = ['ations', 'nesses', 'ments', 'ings', 'ions', 'ities', 'ives', 'izers',
+            'ated', 'ates', 'ized', 'izes', 'ers', 'ied', 'ies', 'ing', 'ion', 'ity', 'ive',
+            'ize', 'ment', 'ness', 'ator', 'ate', 'er', 'ed', 'es', 's'];
+        for (const suffix of suffixes) {
+            if (word.endsWith(suffix) && word.length - suffix.length >= 4) {
+                return word.slice(0, -suffix.length) + (suffix === 'ies' ? 'y' : '');
+            }
+        }
+        return word;
+    }
+    getRelatedNotes(filepath, limit = 10) {
+        if (!this.index)
+            return [];
+        const source = this.getFileInfo(filepath);
+        if (!source)
+            return [];
+        const results = new Map();
+        const totalFiles = this.index.files.size;
+        for (const tag of source.tags) {
+            const canonical = tag.toLowerCase();
+            const paths = this.index.tagIndex.get(canonical);
+            if (!paths || paths.size < 2)
+                continue;
+            const weight = Math.max(0.1, Math.log((totalFiles + 1) / (paths.size + 1)) / Math.log(totalFiles + 2));
+            for (const target of paths) {
+                if (target === source.path)
+                    continue;
+                const file = this.index.files.get(target);
+                if (!file)
+                    continue;
+                const result = results.get(target) || { filepath: target, filename: file.filename, title: file.title, score: 0, sharedTags: [] };
+                result.score += weight;
+                result.sharedTags.push(canonical);
+                results.set(target, result);
+            }
+        }
+        return [...results.values()].sort((a, b) => b.score - a.score).slice(0, limit);
     }
     hashContent(content) {
         let hash = 0;
@@ -594,61 +686,148 @@ class VaultIndexer {
     getCachePath() {
         return path.join(this.vaultPath, '.obsidian-brain', 'index.json');
     }
+    trackUpdate(update) {
+        this.pendingUpdates.add(update);
+        void update.finally(() => this.pendingUpdates.delete(update));
+    }
+    scheduleCacheSave() {
+        this.cacheDirty = true;
+        if (this.cacheSaveTimer)
+            clearTimeout(this.cacheSaveTimer);
+        if (this.disposed)
+            return;
+        this.cacheSaveTimer = setTimeout(() => {
+            this.cacheSaveTimer = undefined;
+            void this.saveToCache();
+        }, 5000);
+    }
     async saveToCache() {
         if (!this.index)
             return;
-        try {
-            const cacheDir = path.join(this.vaultPath, '.obsidian-brain');
-            await vscode.workspace.fs.createDirectory(vscode.Uri.file(cacheDir));
-            // Serialize index (Maps to objects)
-            const serialized = {
-                version: this.index.version,
-                vaultPath: this.index.vaultPath,
-                lastUpdated: this.index.lastUpdated,
-                files: Object.fromEntries(this.index.files),
-                tagIndex: Object.fromEntries(Array.from(this.index.tagIndex.entries()).map(([k, v]) => [k, Array.from(v)])),
-                // Skip wordIndex for cache - too large, rebuild on load
-            };
-            const content = JSON.stringify(serialized);
-            await vscode.workspace.fs.writeFile(vscode.Uri.file(this.getCachePath()), new TextEncoder().encode(content));
-        }
-        catch (error) {
-            console.log('[VaultIndexer] Failed to save cache:', error);
-        }
+        if (this.cacheSaveTimer)
+            clearTimeout(this.cacheSaveTimer);
+        this.cacheSaveTimer = undefined;
+        this.cacheDirty = false;
+        const paths = [...this.index.files.keys()];
+        const ids = new Map(paths.map((filepath, id) => [filepath, id]));
+        const serialized = {
+            version: exports.CACHE_VERSION,
+            vaultPath: this.index.vaultPath,
+            lastUpdated: this.index.lastUpdated,
+            files: Object.fromEntries(this.index.files),
+            paths,
+            tagIndex: Object.fromEntries([...this.index.tagIndex].map(([tag, files]) => [tag, [...files].map(p => ids.get(p))])),
+            wordIndex: Object.fromEntries([...this.index.wordIndex].map(([term, postings]) => [term,
+                Object.fromEntries([...postings].map(([p, count]) => [ids.get(p), count]))]))
+        };
+        const content = new TextEncoder().encode(JSON.stringify(serialized));
+        const cachePath = this.getCachePath();
+        // Serialize disk writes too, so an older snapshot cannot win a race.
+        this.cacheWrite = this.cacheWrite.then(async () => {
+            try {
+                await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(cachePath)));
+                await vscode.workspace.fs.writeFile(vscode.Uri.file(cachePath), content);
+            }
+            catch (error) {
+                this.cacheDirty = true;
+                console.log('[VaultIndexer] Failed to save cache:', error);
+            }
+        });
+        await this.cacheWrite;
     }
     async loadFromCache() {
         try {
-            const uri = vscode.Uri.file(this.getCachePath());
-            const content = await vscode.workspace.fs.readFile(uri);
-            const parsed = JSON.parse(new TextDecoder('utf-8').decode(content));
-            // Deserialize to Maps
-            const index = {
-                version: parsed.version,
-                vaultPath: parsed.vaultPath,
-                lastUpdated: parsed.lastUpdated,
-                files: new Map(Object.entries(parsed.files)),
-                tagIndex: new Map(Object.entries(parsed.tagIndex).map(([k, v]) => [k, new Set(v)])),
-                wordIndex: new Map() // Rebuild word index
-            };
-            // Rebuild word index from files
-            for (const [filepath, file] of index.files) {
-                // Quick rebuild from stored content would need content, skip for now
-                // Will be populated on first search or delta update
+            const content = await vscode.workspace.fs.readFile(vscode.Uri.file(this.getCachePath()));
+            const parsed = JSON.parse(new TextDecoder().decode(content));
+            const object = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+            if (parsed.version !== exports.CACHE_VERSION || parsed.vaultPath !== this.vaultPath || !Number.isFinite(parsed.lastUpdated)
+                || !object(parsed.files) || !Array.isArray(parsed.paths) || !object(parsed.tagIndex) || !object(parsed.wordIndex))
+                return null;
+            const paths = parsed.paths;
+            if (paths.some(p => typeof p !== 'string') || new Set(paths).size !== paths.length
+                || paths.length !== Object.keys(parsed.files).length || paths.some(p => !Object.hasOwn(parsed.files, p)))
+                return null;
+            const files = new Map(Object.entries(parsed.files));
+            for (const [p, file] of files) {
+                if (!object(file) || file.path !== p || typeof file.filename !== 'string' || typeof file.title !== 'string'
+                    || !Number.isFinite(file.modified) || !Number.isFinite(file.contentHash) || typeof file.firstLine !== 'string'
+                    || !Number.isInteger(file.wordCount) || file.wordCount < 0 || !Number.isInteger(file.bodyWordCount) || file.bodyWordCount < 0
+                    || !Array.isArray(file.tags) || file.tags.some(t => typeof t !== 'string')
+                    || !Array.isArray(file.headings) || file.headings.some(h => !object(h) || typeof h.text !== 'string' || !Number.isInteger(h.level) || !Number.isInteger(h.line))
+                    || !Array.isArray(file.links) || file.links.some(l => typeof l !== 'string'))
+                    return null;
             }
-            return index;
+            const resolve = (id) => {
+                const n = Number(id);
+                return Number.isInteger(n) && n >= 0 && String(n) === String(id) ? paths[n] : undefined;
+            };
+            const tagIndex = new Map();
+            for (const [tag, ids] of Object.entries(parsed.tagIndex)) {
+                if (tag !== tag.toLowerCase() || !Array.isArray(ids))
+                    return null;
+                const resolved = new Set();
+                for (const id of ids) {
+                    if (!Number.isInteger(id))
+                        return null;
+                    const p = resolve(id);
+                    if (p) {
+                        if (!files.get(p).tags.some(t => t.toLowerCase() === tag))
+                            return null;
+                        resolved.add(p);
+                    }
+                }
+                if (resolved.size)
+                    tagIndex.set(tag, resolved);
+            }
+            const wordIndex = new Map();
+            const counts = new Map();
+            for (const [term, entries] of Object.entries(parsed.wordIndex)) {
+                if (!object(entries) || !/^[a-z0-9]{3,}$/.test(term))
+                    return null;
+                const postings = new Map();
+                for (const [id, count] of Object.entries(entries)) {
+                    if (!Number.isInteger(count) || count <= 0)
+                        return null;
+                    const p = resolve(id);
+                    if (p) {
+                        postings.set(p, count);
+                        counts.set(p, (counts.get(p) || 0) + count);
+                    }
+                }
+                if (postings.size)
+                    wordIndex.set(term, postings);
+            }
+            // Detect incomplete postings rather than trusting unchanged-file reconciliation.
+            for (const [p, file] of files) {
+                if ((counts.get(p) || 0) !== file.bodyWordCount || file.tags.some(t => !tagIndex.get(t.toLowerCase())?.has(p)))
+                    return null;
+            }
+            return { version: exports.CACHE_VERSION, vaultPath: parsed.vaultPath, lastUpdated: parsed.lastUpdated, files, tagIndex, wordIndex };
         }
         catch {
             return null;
         }
     }
-    /**
-     * Dispose of resources
-     */
-    dispose() {
+    /** Cancel timers, finish queued indexing and persist pending changes. */
+    async dispose() {
+        this.disposed = true;
         this.watcher?.dispose();
-        for (const timer of this.debounceTimers.values()) {
+        if (this.cacheSaveTimer)
+            clearTimeout(this.cacheSaveTimer);
+        this.cacheSaveTimer = undefined;
+        const pendingPaths = [...this.debounceTimers.keys()];
+        for (const timer of this.debounceTimers.values())
             clearTimeout(timer);
+        this.debounceTimers.clear();
+        await this.initialization?.catch(() => { });
+        await Promise.all([...this.pendingUpdates]);
+        for (const p of pendingPaths) {
+            await this.indexFile(p);
+            this.cacheDirty = true;
         }
+        if (this.cacheDirty)
+            await this.saveToCache();
+        await this.cacheWrite;
     }
 }
 exports.VaultIndexer = VaultIndexer;
