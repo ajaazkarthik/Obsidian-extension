@@ -1,6 +1,6 @@
 # Obsidian Brain
 
-Obsidian Brain 2.12.0 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool and no MCP server requirement.
+Obsidian Brain 2.15.0 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool. VS Code needs no MCP server; an optional zero-dependency MCP stdio adapter also makes the same tool available in Claude Code.
 
 Leave `obsidianBrain.vaultPath` blank for automatic setup: Windows uses `C:\workspace\obsidian-vault`; macOS and Linux use `~/workspace/obsidian-vault`. The extension creates the default vault and standard folders on first use. Set an absolute path (or `~/…`) to use an existing vault instead. Paths remain machine-specific with workspace overrides supported, and are resolved on the extension host, including SSH/WSL hosts.
 
@@ -13,11 +13,11 @@ Use **Configure Obsidian Vault** to choose an existing folder through the native
 | `search` | Scored title, filename, tag, heading and body search; multiword OR; `limit` defaults to 15 |
 | `list` | Browse a vault directory |
 | `read` | Inline note content, capped at 7,000 characters by default; pass a larger explicit `max_chars` after truncation |
-| `write` | Create or overwrite a note; preserve different overwritten content under `_Archive/` |
+| `write` | Create or overwrite a note; preserve different overwritten content under `_Archive/` (maximum five historical copies per source note) |
 | `append` | Add content to a note |
 | `quick_note` | Content-based routing, session hash deduplication, timestamp and random suffix |
 | `str_replace` | Replace the first exact match and archive superseded content |
-| `insert` | Insert at a 1-based line or create a missing note |
+| `insert` | Insert at a 1-based line or create a missing note; archive the prior version when content changes |
 | `delete` | Delete a note and remove index postings |
 | `move` | Move a note and update indexed paths |
 | `summarize_note` | Factual local TL;DR, headings, statistics and canonical tags |
@@ -32,6 +32,19 @@ The version-3 disk cache stores file metadata and compact path-ID tag and counte
 Inline tags exclude code fences, inline code, URL fragments, line anchors and six/eight-character hex colours containing digits. YAML bracket arrays and block lists work with LF and CRLF. Indexing, summaries and auto-tag filtering share the same extractor.
 
 Every third successful `write`, `append`, `quick_note`, `str_replace` or `insert` appends a timestamped save count and up to 20 recent activity entries to `_Inbox/session-activity-log.md`. Duplicate captures and failed saves do not count. Every 12 operations, a reminder asks you to save useful progress. Checkpoints record file activity; the extension does not monitor context or token usage and emits no automatic compaction directives.
+
+## Claude Code via MCP (optional)
+
+The shipped `server/dist/index.js` implements **newline-delimited JSON-RPC 2.0** on standard input/output, including `initialize`, `tools/list`, `tools/call`, and notifications. It loads the same compiled `out/brainTool.js` as the VS Code extension, and exposes the exact one-tool schema from `package.json`. The adapter requires no MCP SDK, network service, VS Code process or new runtime dependency. Logs and errors go to stderr; stdout contains protocol messages only.
+
+Set `OBSIDIAN_VAULT_PATH` to an **existing absolute directory** on the machine that runs the server. The following is a user-scoped Claude Code setup after `npm ci && npm run compile` (replace both absolute paths; use a disposable vault when testing):
+
+```sh
+claude mcp add --env OBSIDIAN_VAULT_PATH=/absolute/path/to/obsidian-vault --transport stdio --scope user obsidian-brain -- node /absolute/path/to/Obsidian-extension/server/dist/index.js
+claude mcp list
+```
+
+You can also run the server directly with `OBSIDIAN_VAULT_PATH=/absolute/path/to/vault node server/dist/index.js`. Send one JSON-RPC request per line; do not mix interactive prompts or log output with its stdin. The adapter processes requests serially so two writes never interleave. Verify with `npm test`, which launches the real server and checks initialize, tool discovery, a search and a write using a uniquely named disposable vault. MCP does not add DLP, remote access or token-handling features.
 
 ## Brain-usage enforcement
 
@@ -63,9 +76,9 @@ npm test
 npm run package
 ```
 
-The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.12.0.vsix`, inspects its manifest and runtime, and reruns the suite against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the hook assets, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
+The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.15.0.vsix`, inspects its manifest, MCP adapter and runtime, and reruns both acceptance and MCP tests against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the hook assets, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
 
-The acceptance harness uses the actual compiled `BrainTool` and `VaultIndexer`, a minimal VS Code shim, uniquely named disposable vaults, controlled timestamps and mocked timers. Focused groups can run with `node test/acceptance.cjs index`, `tags`, `timers`, `operations` , `registration`, `platform` or `hooks`. `BRAIN_RUNTIME` selects a different compiled runtime for package verification. `test/baseline.cjs` documents the defects reproduced against the original 2.9 runtime; run it only with `BRAIN_RUNTIME` pointing at that isolated baseline.
+The acceptance harness uses the actual compiled `BrainTool` and `VaultIndexer`, a minimal VS Code shim, uniquely named disposable vaults, controlled timestamps and mocked timers. The MCP test exercises the real stdio process and verifies stdout protocol hygiene. Focused groups can run with `node test/acceptance.cjs index`, `tags`, `timers`, `operations` , `registration`, `platform` or `hooks`. `BRAIN_RUNTIME` selects a different compiled runtime for package verification. `test/baseline.cjs` documents the defects reproduced against the original 2.9 runtime; run it only with `BRAIN_RUNTIME` pointing at that isolated baseline.
 
 Live VS Code UI behavior, host-managed response spilling and performance on a production vault require separate integration verification. No recall-quality, response-size or cache-size improvement percentage is claimed.
 
@@ -74,3 +87,5 @@ Live VS Code UI behavior, host-managed response spilling and performance on a pr
 MIT. Publisher and extension identity remain `ubanishathanvenkatesan.obsidian-brain`.
 
 CI runs the compile, acceptance and packaged-runtime checks on Windows, macOS and Linux. Vault operations run in sequence so parallel appends and setting changes preserve content. Read failures from file locks or permissions are reported; only missing files are created by append/insert.
+
+Generated `out/`, `node_modules/` and `*.vsix` are deliberately **untracked**. Cross-platform CI on Windows, macOS and Linux installs dependencies, compiles, tests and packages from source. `node research/measure-index-removal.cjs` provides a repeatable algorithm-level before/after comparison (25,000 vocabulary terms, eight terms per removed file, 200 iterations); it is not a production vault latency benchmark.
