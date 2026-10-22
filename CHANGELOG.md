@@ -2,6 +2,15 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.15.0] - 2026-10-23
+
+- **Claude Code MCP:** Added zero-dependency `server/dist/index.js` and a local VS Code API shim. JSON-RPC 2.0 stdio supports initialize, tools/list, tools/call and notifications. Schema is read from `package.json`; vault from `OBSIDIAN_VAULT_PATH`; stdout remains protocol-only. A disposable-vault child-process test checks handshake and successful search and write (previously no MCP transport).
+- **Repository hygiene:** Generated `node_modules/`, `out/` and VSIX releases are ignored and no longer tracked; Windows/macOS/Linux CI compiles before package verification. The obsolete `git diff --exit-code -- out` gate was removed because `out/` is now deliberately generated.
+- **Single version source:** Manifest is 2.15.0; packaging scripts and registration acceptance read the version from `package.json` rather than hard-coding 2.12.0. Versions 2.12–2.14 are not introduced by this change.
+- **Archive consistency:** `insert`, `write`, and `str_replace` archive superseded content when different. Archive retention changes from unbounded to **at most 5** copies per source note; removed copies are pruned from disk and index. Identical content creates **0** new archives.
+- **Index removal complexity:** Reverse per-file term sets reduce removed-file posting-list visits from total vocabulary size (N) to that file's distinct terms (k), while preserving CACHE_VERSION=3, cache round-trip and ranking. The repeatable algorithm benchmark in `research/measure-index-removal.cjs` compares **25,000 vs 8** visits per removal, with measured runtime reported when executed; it is not a production latency estimate.
+- **Docs and cross-platform testing:** README adds MCP setup; acceptance covers bounded archives and reverse postings, MCP smoke-tests real JSON-RPC stdio; packaging checks include the adapter. No DLP features added.
+
 ## [2.12.0] - 2026-10-14
 
 - **Portable brain-usage enforcement.** The extension now installs the `brain_guard` hook, its hook config and the brain-first-workflow instruction into the user-level Copilot folders (`~/.copilot/hooks`, `~/.copilot/instructions`) at activation. Enforcement therefore travels with the extension to every workspace and every machine — no per-repository setup.
