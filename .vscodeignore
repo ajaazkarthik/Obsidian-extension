@@ -18,3 +18,5 @@
 !assets/brain_guard.py
 !assets/brain-first-workflow.instructions.md
 !.github/agents/*.agent.md
+!server/dist/index.js
+!server/dist/vscode-shim.js

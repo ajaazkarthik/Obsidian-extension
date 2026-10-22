@@ -124,6 +124,19 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         const archived = `_Archive/${clean.replace(/\.md$/, '')}-${timestamp}-${suffix}.md`;
         await this.filesystemBackend.writeFile(archived, previous);
         await this.indexer.indexFileImmediately(archived);
+
+        // Bound history per source note, while keeping all retained archives searchable.
+        const slash = archived.lastIndexOf('/');
+        const folder = archived.slice(0, slash);
+        const stem = clean.replace(/\.md$/, '').split('/').pop()!;
+        const copies = (await this.filesystemBackend.listDirectory(folder))
+            .filter(entry => entry.type === 'file' && entry.name.startsWith(stem + '-') &&
+                /^-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{4}\.md$/.test(entry.name.slice(stem.length)))
+            .map(entry => entry.path).sort();
+        for (const stale of copies.slice(0, Math.max(0, copies.length - 5))) {
+            await this.filesystemBackend.deleteFile(stale);
+            this.indexer.removeFileImmediately(stale);
+        }
     }
 
     private resultLimit(limit: number | undefined, fallback: number): number {
@@ -548,6 +561,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         lines.splice(insertIndex, 0, content);
         
         const newContent = lines.join('\n');
+        await this.archiveSuperseded(filepath, newContent);
         await this.filesystemBackend.writeFile(filepath, newContent);
         await this.indexer.indexFileImmediately(filepath);
         await this.recordSave('insert', filepath);

@@ -22,4 +22,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run package
-      - run: git diff --exit-code -- out
+      # out/ is intentionally untracked; npm run package builds and verifies it.
+      - run: node research/measure-index-removal.cjs

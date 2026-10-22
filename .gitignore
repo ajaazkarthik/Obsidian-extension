@@ -9,3 +9,6 @@ dist/
 *~
 .env
 .env.local
+# The standalone MCP shim is source, even though other dist/ directories are ignored.
+!server/dist/
+!server/dist/*.js

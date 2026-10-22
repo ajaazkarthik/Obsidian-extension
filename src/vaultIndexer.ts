@@ -71,6 +71,8 @@ export class VaultIndexer {
     private cacheWrite: Promise<void> = Promise.resolve();
     private pendingUpdates = new Set<Promise<void>>();
     private disposed = false;
+    // Runtime reverse index: file -> its distinct body terms. Cache v3 stays unchanged.
+    private fileTerms = new Map<string, Set<string>>();
 
     constructor(private readonly configuredPath?: string) {}
 
@@ -101,6 +103,14 @@ export class VaultIndexer {
         
         if (cached && cached.vaultPath === this.vaultPath) {
             this.index = cached;
+            // Build reverse postings once on warm start; deletion never scans all terms.
+            this.fileTerms.clear();
+            for (const [term, postings] of cached.wordIndex) {
+                for (const filepath of postings.keys()) {
+                    if (!this.fileTerms.has(filepath)) this.fileTerms.set(filepath, new Set());
+                    this.fileTerms.get(filepath)!.add(term);
+                }
+            }
             // Do a quick delta update for any changed files
             await this.deltaUpdate();
         } else {
@@ -320,7 +330,8 @@ export class VaultIndexer {
         this.refreshVaultPath();
         await prepareVault(this.vaultPath);
         this.indexing = true;
-        
+        this.fileTerms.clear();
+
         this.index = {
             version: CACHE_VERSION,
             vaultPath: this.vaultPath,
@@ -493,7 +504,9 @@ export class VaultIndexer {
             }
             
             // Keep term frequency for body relevance and lossless persistence.
-            for (const word of words.filter(w => w.length >= 3)) {
+            const eligibleWords = words.filter(w => w.length >= 3);
+            this.fileTerms.set(filepath, new Set(eligibleWords));
+            for (const word of eligibleWords) {
                 if (!this.index.wordIndex.has(word)) this.index.wordIndex.set(word, new Map());
                 const postings = this.index.wordIndex.get(word)!;
                 postings.set(filepath, (postings.get(filepath) || 0) + 1);
@@ -524,11 +537,12 @@ export class VaultIndexer {
                 }
             }
             
-            for (const [word, postings] of this.index.wordIndex) {
-                postings.delete(filepath);
-                if (postings.size === 0) this.index.wordIndex.delete(word);
+            for (const word of this.fileTerms.get(filepath) || []) {
+                const postings = this.index.wordIndex.get(word);
+                postings?.delete(filepath);
+                if (postings?.size === 0) this.index.wordIndex.delete(word);
             }
-            
+            this.fileTerms.delete(filepath);
             this.index.files.delete(filepath);
         }
     }
