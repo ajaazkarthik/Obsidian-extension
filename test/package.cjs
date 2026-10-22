@@ -21,18 +21,18 @@ async function extract(archive,directory) {
  });return names;
 }
 (async()=>{
- const cwd=path.resolve(__dirname,'..');const archive=process.argv[2]||path.join(cwd,'releases/obsidian-brain-2.12.0.vsix');
+ const cwd=path.resolve(__dirname,'..');const archive=process.argv[2]||path.join(cwd,'releases/obsidian-brain-'+require('../package.json').version+'.vsix');
  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-package-'));
  try {
   const names=await extract(archive,temp);
   const expected=['[Content_Types].xml','extension.vsixmanifest','extension/package.json','extension/readme.md','extension/changelog.md','extension/LICENSE.txt',
    ...['extension','brainTool','vaultIndexer','filesystemBackend','hookInstaller'].flatMap(m=>[`extension/out/${m}.js`,`extension/out/${m}.d.ts`]),
    ...['remember','recall','summarize','compress','auto-save'].map(n=>`extension/prompts/brain-${n}.prompt.md`),
-   'extension/prompts/brain-usage.instructions.md','extension/assets/brain_guard.py','extension/assets/brain-first-workflow.instructions.md','extension/.github/agents/brain-manager.agent.md'];
+   'extension/server/dist/index.js','extension/server/dist/vscode-shim.js','extension/prompts/brain-usage.instructions.md','extension/assets/brain_guard.py','extension/assets/brain-first-workflow.instructions.md','extension/.github/agents/brain-manager.agent.md'];
   assert.deepEqual(names.sort(),expected.sort());
   const packaged=JSON.parse(await fs.readFile(path.join(temp,'extension/package.json'),'utf8'));
   const local=JSON.parse(await fs.readFile(path.join(cwd,'package.json'),'utf8'));assert.deepEqual(packaged,local);
-  const xml=await fs.readFile(path.join(temp,'extension.vsixmanifest'),'utf8');assert(xml.includes('Version="2.12.0"'));assert(xml.includes('Publisher="ubanishathanvenkatesan"'));assert(!xml.includes('Microsoft.VisualStudio.Code.PreRelease'));
+  const xml=await fs.readFile(path.join(temp,'extension.vsixmanifest'),'utf8');assert(xml.includes('Version="'+local.version+'"'));assert(xml.includes('Publisher="ubanishathanvenkatesan"'));assert(!xml.includes('Microsoft.VisualStudio.Code.PreRelease'));
   for(const m of ['extension','brainTool','vaultIndexer','filesystemBackend','hookInstaller'])for(const ext of ['js','d.ts']) {
    assert.equal(await fs.readFile(path.join(temp,`extension/out/${m}.${ext}`),'utf8'),await fs.readFile(path.join(cwd,`out/${m}.${ext}`),'utf8'));
   }
@@ -41,6 +41,8 @@ async function extract(archive,directory) {
   }
   console.log(`PASS VSIX allowlist (${names.length} entries), identity, version, stable release and runtime/declaration byte parity`);
   execFileSync(process.execPath,[path.join(__dirname,'acceptance.cjs')],{cwd,stdio:'inherit',env:{...process.env,BRAIN_RUNTIME:path.join(temp,'extension/out')}});
-  console.log('PASS packaged runtime acceptance suite; extracted fixtures cleaned');
+  console.log('PASS packaged runtime acceptance suite');
+  execFileSync(process.execPath,[path.join(__dirname,'mcp.cjs')],{cwd,stdio:'inherit',env:{...process.env,BRAIN_RUNTIME:path.join(temp,'extension/out'),BRAIN_MCP_SERVER:path.join(temp,'extension/server/dist/index.js')}});
+  console.log('PASS packaged MCP runtime; extracted fixtures cleaned');
  } finally {await fs.rm(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});
