@@ -1,6 +1,6 @@
 # Obsidian Brain
 
-Obsidian Brain 2.11.1 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool and no MCP server requirement.
+Obsidian Brain 2.12.0 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool and no MCP server requirement.
 
 Leave `obsidianBrain.vaultPath` blank for automatic setup: Windows uses `C:\workspace\obsidian-vault`; macOS and Linux use `~/workspace/obsidian-vault`. The extension creates the default vault and standard folders on first use. Set an absolute path (or `~/…`) to use an existing vault instead. Paths remain machine-specific with workspace overrides supported, and are resolved on the extension host, including SSH/WSL hosts.
 
@@ -33,6 +33,20 @@ Inline tags exclude code fences, inline code, URL fragments, line anchors and si
 
 Every third successful `write`, `append`, `quick_note`, `str_replace` or `insert` appends a timestamped save count and up to 20 recent activity entries to `_Inbox/session-activity-log.md`. Duplicate captures and failed saves do not count. Every 12 operations, a reminder asks you to save useful progress. Checkpoints record file activity; the extension does not monitor context or token usage and emits no automatic compaction directives.
 
+## Brain-usage enforcement
+
+The brain instruction is guidance only, so "search first, save as you go" is non-deterministic. On activation the extension installs the deterministic half into the user-level Copilot folders, so enforcement travels with the extension to every workspace and machine:
+
+| Installed file | Purpose |
+| --- | --- |
+| `~/.copilot/hooks/scripts/brain_guard.py` | The guard script |
+| `~/.copilot/hooks/obsidian-brain.json` | Wires the guard to `SessionStart`, `PostToolUse`, `PreCompact` and `Stop` |
+| `~/.copilot/instructions/brain-first-workflow.instructions.md` | The enforced search/save cadence |
+
+The guard reads `_Inbox/session-activity-log.md` in the vault, which the brain tool already writes. It injects the protocol at session start, reminds the agent when five tool calls pass with no save recorded, and blocks completion once per session when nothing was saved. It never fails closed: any parse or IO error exits silently so a broken hook cannot wedge a session.
+
+Installation is idempotent and non-destructive. Every generated file carries an `obsidian-brain-managed` marker; a file without that marker is treated as yours and is never overwritten. When the open workspace already ships its own guard in `.github/hooks`, the user-level hook config is skipped so the guard does not fire twice per event. Set `obsidianBrain.installAgentHooks` to `false` to opt out.
+
 ## Prompts and organization
 
 The five prompt contributions remain: `brain-remember`, `brain-recall`, `brain-summarize`, `brain-compress` and `brain-auto-save`, plus the `brain-usage` instructions. Summaries and handoffs are explicitly requested through these prompts.
@@ -49,9 +63,9 @@ npm test
 npm run package
 ```
 
-The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.11.1.vsix`, inspects its manifest and runtime, and reruns the suite against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
+The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.12.0.vsix`, inspects its manifest and runtime, and reruns the suite against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the hook assets, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
 
-The acceptance harness uses the actual compiled `BrainTool` and `VaultIndexer`, a minimal VS Code shim, uniquely named disposable vaults, controlled timestamps and mocked timers. Focused groups can run with `node test/acceptance.cjs index`, `tags`, `timers`, `operations` , `registration` or `platform`. `BRAIN_RUNTIME` selects a different compiled runtime for package verification. `test/baseline.cjs` documents the defects reproduced against the original 2.9 runtime; run it only with `BRAIN_RUNTIME` pointing at that isolated baseline.
+The acceptance harness uses the actual compiled `BrainTool` and `VaultIndexer`, a minimal VS Code shim, uniquely named disposable vaults, controlled timestamps and mocked timers. Focused groups can run with `node test/acceptance.cjs index`, `tags`, `timers`, `operations` , `registration`, `platform` or `hooks`. `BRAIN_RUNTIME` selects a different compiled runtime for package verification. `test/baseline.cjs` documents the defects reproduced against the original 2.9 runtime; run it only with `BRAIN_RUNTIME` pointing at that isolated baseline.
 
 Live VS Code UI behavior, host-managed response spilling and performance on a production vault require separate integration verification. No recall-quality, response-size or cache-size improvement percentage is claimed.
 

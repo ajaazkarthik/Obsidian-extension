@@ -21,20 +21,23 @@ async function extract(archive,directory) {
  });return names;
 }
 (async()=>{
- const cwd=path.resolve(__dirname,'..');const archive=process.argv[2]||path.join(cwd,'releases/obsidian-brain-2.11.1.vsix');
+ const cwd=path.resolve(__dirname,'..');const archive=process.argv[2]||path.join(cwd,'releases/obsidian-brain-2.12.0.vsix');
  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-package-'));
  try {
   const names=await extract(archive,temp);
   const expected=['[Content_Types].xml','extension.vsixmanifest','extension/package.json','extension/readme.md','extension/changelog.md','extension/LICENSE.txt',
-   ...['extension','brainTool','vaultIndexer','filesystemBackend'].flatMap(m=>[`extension/out/${m}.js`,`extension/out/${m}.d.ts`]),
+   ...['extension','brainTool','vaultIndexer','filesystemBackend','hookInstaller'].flatMap(m=>[`extension/out/${m}.js`,`extension/out/${m}.d.ts`]),
    ...['remember','recall','summarize','compress','auto-save'].map(n=>`extension/prompts/brain-${n}.prompt.md`),
-   'extension/prompts/brain-usage.instructions.md','extension/.github/agents/brain-manager.agent.md'];
+   'extension/prompts/brain-usage.instructions.md','extension/assets/brain_guard.py','extension/assets/brain-first-workflow.instructions.md','extension/.github/agents/brain-manager.agent.md'];
   assert.deepEqual(names.sort(),expected.sort());
   const packaged=JSON.parse(await fs.readFile(path.join(temp,'extension/package.json'),'utf8'));
   const local=JSON.parse(await fs.readFile(path.join(cwd,'package.json'),'utf8'));assert.deepEqual(packaged,local);
-  const xml=await fs.readFile(path.join(temp,'extension.vsixmanifest'),'utf8');assert(xml.includes('Version="2.11.1"'));assert(xml.includes('Publisher="ubanishathanvenkatesan"'));assert(!xml.includes('Microsoft.VisualStudio.Code.PreRelease'));
-  for(const m of ['extension','brainTool','vaultIndexer','filesystemBackend'])for(const ext of ['js','d.ts']) {
+  const xml=await fs.readFile(path.join(temp,'extension.vsixmanifest'),'utf8');assert(xml.includes('Version="2.12.0"'));assert(xml.includes('Publisher="ubanishathanvenkatesan"'));assert(!xml.includes('Microsoft.VisualStudio.Code.PreRelease'));
+  for(const m of ['extension','brainTool','vaultIndexer','filesystemBackend','hookInstaller'])for(const ext of ['js','d.ts']) {
    assert.equal(await fs.readFile(path.join(temp,`extension/out/${m}.${ext}`),'utf8'),await fs.readFile(path.join(cwd,`out/${m}.${ext}`),'utf8'));
+  }
+  for(const asset of ['brain_guard.py','brain-first-workflow.instructions.md']) {
+   assert.equal(await fs.readFile(path.join(temp,`extension/assets/${asset}`),'utf8'),await fs.readFile(path.join(cwd,`assets/${asset}`),'utf8'));
   }
   console.log(`PASS VSIX allowlist (${names.length} entries), identity, version, stable release and runtime/declaration byte parity`);
   execFileSync(process.execPath,[path.join(__dirname,'acceptance.cjs')],{cwd,stdio:'inherit',env:{...process.env,BRAIN_RUNTIME:path.join(temp,'extension/out')}});

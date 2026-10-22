@@ -11,6 +11,10 @@
 !out/vaultIndexer.d.ts
 !out/filesystemBackend.js
 !out/filesystemBackend.d.ts
+!out/hookInstaller.js
+!out/hookInstaller.d.ts
 !prompts/*.prompt.md
 !prompts/brain-usage.instructions.md
+!assets/brain_guard.py
+!assets/brain-first-workflow.instructions.md
 !.github/agents/*.agent.md

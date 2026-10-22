@@ -3,7 +3,7 @@
   "publisher": "ubanishathanvenkatesan",
   "displayName": "Obsidian Brain - Global Agent Memory",
   "description": "Global AI agent knowledge persistence using an Obsidian vault, with indexed search, related notes and factual save checkpoints.",
-  "version": "2.11.1",
+  "version": "2.12.0",
   "license": "MIT",
   "engines": {
     "vscode": "^1.95.0"
@@ -59,6 +59,12 @@
           "type": "string",
           "default": "",
           "description": "Absolute vault path on this extension host. Leave blank to automatically create C:\\workspace\\obsidian-vault on Windows or ~/workspace/obsidian-vault on macOS/Linux. Supports ~ for the home directory.",
+          "scope": "machine-overridable"
+        },
+        "obsidianBrain.installAgentHooks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Install the brain-usage enforcement hook into the user-level Copilot folders (~/.copilot/hooks and ~/.copilot/instructions) so the brain search/save cadence is enforced in every workspace. Files you authored yourself are never overwritten.",
           "scope": "machine-overridable"
         }
       }

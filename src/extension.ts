@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { BrainTool } from './brainTool.js';
 import { configuredVaultPath } from './filesystemBackend.js';
+import { installAgentHooks } from './hookInstaller.js';
 
 let activeBrainTool: BrainTool | undefined;
 
@@ -12,6 +13,16 @@ export function activate(context: vscode.ExtensionContext) {
     activeBrainTool = brainTool;
     context.subscriptions.push(vscode.lm.registerTool('obsidian_brain', brainTool), brainTool);
     console.log('[ObsidianBrain] Registered obsidian_brain tool');
+
+    // Install the brain-usage enforcement hook into the user-level Copilot
+    // folders so it travels with the extension to every workspace and machine.
+    void installAgentHooks(context, { vaultPath: safeVaultPath() }).then(report => {
+        if (report.installed) {
+            console.log(`[ObsidianBrain] Agent hooks ready in ${report.hooksDir} (${report.written.length} written, ${report.skipped.length} user-owned)`);
+        } else {
+            console.log(`[ObsidianBrain] Agent hooks not installed: ${report.reason}`);
+        }
+    });
     
     // Initialize the brain indexer in background (don't block activation)
     brainTool.initialize().then(() => {
@@ -137,6 +148,15 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     console.log('[ObsidianBrain] Extension activated successfully!');
+}
+
+/** Vault path for the hook env var; blank when unset or invalid. */
+function safeVaultPath(): string | undefined {
+    try {
+        return configuredVaultPath();
+    } catch {
+        return undefined;
+    }
 }
 
 export async function deactivate(): Promise<void> {

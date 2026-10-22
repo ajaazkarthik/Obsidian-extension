@@ -113,6 +113,7 @@ const invoke=async(b,operation,args={})=>(await b.invoke({input:{operation,...ar
   if(mode==='all'||mode==='operations') await operations();
   if(mode==='all'||mode==='registration') await registration();
   if(mode==='all'||mode==='platform') await platform();
+  if(mode==='all'||mode==='hooks') await hooks();
   console.log(`RESULT: ${passed} acceptance groups passed (${mode}, runtime=${runtime})`);
  } finally {for(const i of instances)await i.dispose();mock.timers.reset();await fs.rm(vault,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});
@@ -225,7 +226,7 @@ async function operations() {
 async function registration() {
  await check('manifest and activation expose exactly one native tool, 14 operations and preserved contributions',async()=>{
   const manifest=JSON.parse(await fs.readFile(path.join(runtime,'../package.json'),'utf8'));
-  assert.equal(manifest.version,'2.11.1');assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
+  assert.equal(manifest.version,'2.12.0');assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
   assert.deepEqual(manifest.contributes.languageModelTools.map(t=>t.name),['obsidian_brain']);const tool=manifest.contributes.languageModelTools[0];assert.equal(tool.toolReferenceName,'obsidian_brain');
   const operations=['search','list','read','write','append','quick_note','str_replace','insert','delete','move','summarize_note','list_recent','auto_tag','related_notes'];assert.deepEqual(tool.inputSchema.properties.operation.enum,operations);assert.equal(tool.inputSchema.properties.max_chars.type,'number');
   assert.deepEqual(manifest.contributes.chatPromptFiles.map(p=>p.name).sort(),['brain-auto-save','brain-compress','brain-recall','brain-remember','brain-summarize']);assert(manifest.contributes.chatInstructions.some(p=>p.name==='brain-usage'));assert(manifest.contributes.configuration.properties['obsidianBrain.vaultPath']);assert(!manifest.contributes.configuration.properties['obsidianBrain.filesystemAllowedDirectories']);
@@ -306,4 +307,134 @@ async function platform() {
    assert((await invoke(brain,'write',{filepath:'Engineering\\new.md',content:'switchedwritebodymarker'})).includes('Successfully wrote'));assert(await fs.stat(path.join(b,'Engineering/new.md')));assert(!await fs.stat(path.join(a,'Engineering/new.md')).then(()=>true,()=>false));assert(brain.indexer.getFileInfo('Engineering\\new.md'));assert((await invoke(brain,'search',{query:'switchedwritebodymarker'})).includes('Engineering/new.md'));
   } finally {await brain.dispose();setVault(vault);}
  });
+}
+
+async function hooks() {
+ const {installAgentHooks,MANAGED_MARKER,buildHookConfig,withMarker,isManaged}=require(runtime+'/hookInstaller.js');
+ const {execFileSync}=require('node:child_process');
+ const home=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-home-'));
+ const context={extensionUri:{fsPath:path.resolve(__dirname,'..')}};
+ const hooksDir=path.join(home,'.copilot','hooks');
+ const configPath=path.join(hooksDir,'obsidian-brain.json');
+ const scriptPath=path.join(hooksDir,'scripts','brain_guard.py');
+ const instructionPath=path.join(home,'.copilot','instructions','brain-first-workflow.instructions.md');
+ const read=p=>fs.readFile(p,'utf8');
+ const exists=p=>fs.stat(p).then(()=>true,()=>false);
+ try {
+  await check('installs guard script, hook config and instruction into user-level Copilot folders',async()=>{
+   const report=await installAgentHooks(context,{homeDir:home,vaultPath:'/tmp/synthetic-vault'});
+   assert.equal(report.installed,true,report.reason);
+   assert.equal(report.skipped.length,0);
+   assert.equal(report.hooksDir,hooksDir);
+   assert.deepEqual(report.written.sort(),[configPath,instructionPath,scriptPath].sort());
+   assert(isManaged(await read(scriptPath)));
+   assert(isManaged(await read(configPath)));
+   assert(isManaged(await read(instructionPath)));
+   assert((await read(instructionPath)).startsWith('---'),'instruction keeps YAML frontmatter first');
+  });
+  await check('hook config wires all four events with absolute paths and a vault env override',async()=>{
+   const cfg=JSON.parse(await read(configPath));
+   assert.deepEqual(Object.keys(cfg.hooks).sort(),['PostToolUse','PreCompact','SessionStart','Stop']);
+   for(const event of ['SessionStart','PostToolUse','PreCompact','Stop']) {
+    const [entry]=cfg.hooks[event];
+    assert.equal(entry.type,'command');
+    assert(entry.command.includes(scriptPath),`${event} command must use the absolute script path`);
+    assert(entry.command.includes(`--event ${event}`));
+    assert(entry.windows.includes(scriptPath));
+    assert.equal(entry.env.OBSIDIAN_BRAIN_VAULT,'/tmp/synthetic-vault');
+    assert.equal(entry.timeout,10);
+   }
+  });
+  await check('installed guard script runs and self-tests from its installed location',async()=>{
+   const out=execFileSync('python3',[scriptPath,'--self-test'],{encoding:'utf8'});
+   assert(out.includes('all checks passed'));
+   const blocked=execFileSync('python3',[scriptPath,'--event','Stop'],{input:'{}',encoding:'utf8'});
+   assert.equal(blocked,'','a Stop with no session state must stay silent');
+  });
+  await check('reinstall is idempotent and rewrites nothing',async()=>{
+   const before=await Promise.all([read(scriptPath),read(configPath),read(instructionPath)]);
+   const report=await installAgentHooks(context,{homeDir:home,vaultPath:'/tmp/synthetic-vault'});
+   assert.equal(report.installed,true);
+   assert.deepEqual(report.written,[],'unchanged files must not be rewritten');
+   assert.deepEqual(await Promise.all([read(scriptPath),read(configPath),read(instructionPath)]),before);
+  });
+  await check('user-authored files without the marker are never overwritten',async()=>{
+   const mine=path.join(hooksDir,'scripts','brain_guard.py');
+   await fs.writeFile(mine,'#!/usr/bin/env python3\nprint("mine")\n');
+   const report=await installAgentHooks(context,{homeDir:home});
+   assert.deepEqual(report.skipped,[mine]);
+   assert.equal(await read(mine),'#!/usr/bin/env python3\nprint("mine")\n');
+  });
+  await check('opt-out setting skips installation entirely',async()=>{
+   const get=shim.workspace.getConfiguration;
+   shim.workspace.getConfiguration=()=>({get:key=>key==='installAgentHooks'?false:undefined});
+   try {
+    const fresh=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-home-'));
+    const report=await installAgentHooks(context,{homeDir:fresh});
+    assert.equal(report.installed,false);
+    assert(report.reason.includes('installAgentHooks'));
+    assert(!await exists(path.join(fresh,'.copilot','hooks','obsidian-brain.json')));
+    await fs.rm(fresh,{recursive:true,force:true});
+   } finally {shim.workspace.getConfiguration=get;}
+  });
+  await check('marker insertion keeps the shebang first and Windows quoting is correct',async()=>{
+   const marked=withMarker('#!/usr/bin/env python3\nprint(1)\n');
+   assert(marked.split('\n')[0]==='#!/usr/bin/env python3');
+   assert(marked.split('\n')[1].includes(MANAGED_MARKER));
+   assert(!isManaged('#!/usr/bin/env python3\nprint(1)\n'));
+   const win=buildHookConfig('C:\\Users\\me\\.copilot\\hooks\\scripts\\brain_guard.py');
+   assert(win.hooks.SessionStart[0].windows.includes('"C:\\Users\\me\\.copilot\\hooks\\scripts\\brain_guard.py"'));
+   assert(win.hooks.SessionStart[0].command.includes("'C:\\Users\\me\\.copilot\\hooks\\scripts\\brain_guard.py'"),'command stays the POSIX default; windows overrides it');
+   const posix=buildHookConfig('/home/me/.copilot/hooks/scripts/brain_guard.py');
+   assert(posix.hooks.SessionStart[0].command.includes("'/home/me/.copilot/hooks/scripts/brain_guard.py'"));
+  });
+  await check('a workspace that already ships a guard suppresses the user-level config',async()=>{
+   const ws=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-ws-'));
+   const wsHooks=path.join(ws,'.github','hooks');await fs.mkdir(wsHooks,{recursive:true});
+   await fs.writeFile(path.join(wsHooks,'brain-guard.json'),JSON.stringify({hooks:{Stop:[{type:'command',command:'python3 .github/hooks/scripts/brain_guard.py --event Stop'}]}}));
+   const folders=shim.workspace.workspaceFolders;
+   shim.workspace.workspaceFolders=[{uri:{fsPath:ws}}];
+   try {
+    const fresh=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-home-'));
+    const report=await installAgentHooks(context,{homeDir:fresh});
+    assert.equal(report.installed,true);
+    assert(report.skipped.includes(path.join(fresh,'.copilot','hooks','obsidian-brain.json')),'the duplicate config must be skipped');
+    assert(!await exists(path.join(fresh,'.copilot','hooks','obsidian-brain.json')));
+    assert(await exists(path.join(fresh,'.copilot','hooks','scripts','brain_guard.py')),'the script is still installed for reuse');
+    await fs.rm(fresh,{recursive:true,force:true});
+   } finally {shim.workspace.workspaceFolders=folders;await fs.rm(ws,{recursive:true,force:true});}
+  });
+  await check('a workspace without a guard still gets the user-level config',async()=>{
+   const ws=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-ws-'));
+   const folders=shim.workspace.workspaceFolders;
+   shim.workspace.workspaceFolders=[{uri:{fsPath:ws}}];
+   try {
+    const fresh=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-home-'));
+    const report=await installAgentHooks(context,{homeDir:fresh});
+    assert(report.written.includes(path.join(fresh,'.copilot','hooks','obsidian-brain.json')));
+    await fs.rm(fresh,{recursive:true,force:true});
+   } finally {shim.workspace.workspaceFolders=folders;await fs.rm(ws,{recursive:true,force:true});}
+  });
+  await check('a config written earlier is removed once the workspace ships its own guard',async()=>{
+   const ws=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-ws-'));
+   const fresh=await fs.mkdtemp(path.join(os.tmpdir(),'obsidian-brain-home-'));
+   const folders=shim.workspace.workspaceFolders;
+   const userConfig=path.join(fresh,'.copilot','hooks','obsidian-brain.json');
+   try {
+    shim.workspace.workspaceFolders=[{uri:{fsPath:ws}}];
+    await installAgentHooks(context,{homeDir:fresh});
+    assert(await exists(userConfig),'no workspace guard yet, so the user config is written');
+    const wsHooks=path.join(ws,'.github','hooks');await fs.mkdir(wsHooks,{recursive:true});
+    await fs.writeFile(path.join(wsHooks,'brain-guard.json'),JSON.stringify({hooks:{Stop:[{type:'command',command:'python3 .github/hooks/scripts/brain_guard.py --event Stop'}]}}));
+    const report=await installAgentHooks(context,{homeDir:fresh});
+    assert(report.removed.includes(userConfig),'the stale user config must be removed');
+    assert(!await exists(userConfig),'otherwise the guard would fire twice per event');
+   } finally {shim.workspace.workspaceFolders=folders;await fs.rm(fresh,{recursive:true,force:true});await fs.rm(ws,{recursive:true,force:true});}
+  });
+  await check('a missing bundled asset fails soft instead of throwing',async()=>{
+   const report=await installAgentHooks({extensionUri:{fsPath:path.join(home,'no-such-extension')}},{homeDir:home});
+   assert.equal(report.installed,false);
+   assert(report.reason.length>0);
+  });
+ } finally {await fs.rm(home,{recursive:true,force:true});}
 }

@@ -2,6 +2,13 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.12.0] - 2026-10-14
+
+- **Portable brain-usage enforcement.** The extension now installs the `brain_guard` hook, its hook config and the brain-first-workflow instruction into the user-level Copilot folders (`~/.copilot/hooks`, `~/.copilot/instructions`) at activation. Enforcement therefore travels with the extension to every workspace and every machine — no per-repository setup.
+- The hook fires on `SessionStart`, `PostToolUse`, `PreCompact` and `Stop`: it injects the protocol at session start, reminds the agent when 5 tool calls pass with no brain save, and blocks completion once per session when nothing was saved.
+- Installation is idempotent and non-destructive: every generated file carries an `obsidian-brain-managed` marker, and a file without that marker is treated as user-authored and never overwritten. Failures are logged and never block activation.
+- Added `obsidianBrain.installAgentHooks` (default `true`) to opt out.
+
 ## [2.11.1] - 2026-10-13
 
 - Automatic platform-specific vault setup: Windows `C:\workspace\obsidian-vault`, macOS/Linux `~/workspace/obsidian-vault`; machine-specific setting with workspace overrides and native folder picker.

@@ -6,7 +6,7 @@ const {pack} = require('@vscode/vsce/out/package');
  const cwd=path.resolve(__dirname,'..');
  execFileSync(process.execPath,[require.resolve('typescript/bin/tsc'),'-p',cwd],{cwd,stdio:'inherit'});
  execFileSync(process.execPath,['test/acceptance.cjs'],{cwd,stdio:'inherit'});
- const packagePath=path.join(cwd,'releases/obsidian-brain-2.11.1.vsix');
+ const packagePath=path.join(cwd,'releases/obsidian-brain-2.12.0.vsix');
  await fs.mkdir(path.dirname(packagePath),{recursive:true});
  // Run vsce's pack step directly: compile/test already ran using this Node runtime.
  // This avoids a nested npm prepublish command and does not install dependencies.
