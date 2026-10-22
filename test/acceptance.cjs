@@ -29,6 +29,13 @@ const invoke=async(b,operation,args={})=>(await b.invoke({input:{operation,...ar
     assert.equal(idx.index.wordIndex.get('quasarbodymark').get('a.md'),21);
     const r=await idx.search('quasarbodymarker');assert.deepEqual(r.map(x=>x.filepath),['a.md','b.md']);assert(r[0].score>r[1].score);
    });
+   await check('index removal only visits the removed file postings',async()=>{
+    const iterate=idx.index.wordIndex[Symbol.iterator];
+    idx.index.wordIndex[Symbol.iterator]=()=>{throw Error('full vocabulary scan during removal');};
+    try {idx.removeFileImmediately('b.md');} finally {idx.index.wordIndex[Symbol.iterator]=iterate;}
+    assert(!idx.index.files.has('b.md'));assert(!idx.index.wordIndex.get('quasarbodymark')?.has('b.md'));
+    await idx.indexFileImmediately('b.md');assert(await hit(idx,'quasarbodymarker','b.md'));
+   });
    await check('shared stemming, thresholds, first eligible suffix and OR',async()=>{
     assert.deepEqual(idx.tokenize('AT WORK workers working policies organizations cats'),['at','work','work','work','policy','organiz','cats']);
     assert.equal(idx.tokenize('runners')[0],'runn');assert.equal(idx.tokenize('running')[0],'runn');
@@ -172,6 +179,22 @@ async function operations() {
   const both=await b.indexer.search('sharedhistorymarker');assert.equal(both[0].filepath,'Ops/history.md');assert(both[1].score<both[0].score*0.1);
   assert((await fs.readFile(path.join(vault,old[0].filepath),'utf8')).includes('obsoletehistorymarker'));
  });
+ await check('insert archives previous note and retains at most five per source note',async()=>{
+   await op('write',{filepath:'Ops/capped.md',content:'editionmarker000'});
+   for(let i=1;i<=8;i++)await op('insert',{filepath:'Ops/capped.md',insert_line:1,content:'editionmarker'+String(i).padStart(3,'0')});
+   const folder=path.join(vault,'_Archive/Ops');
+   const names=(await fs.readdir(folder)).filter(x=>x.startsWith('capped-')).sort();
+   assert.equal(names.length,5);
+   assert(!await hit(b.indexer,'editionmarker000',names[0]));
+   for(const name of names)assert(b.indexer.getFileInfo('_Archive/Ops/'+name));
+   const state=await fs.readFile(path.join(vault,'Ops/capped.md'),'utf8');
+   assert(state.includes('editionmarker008'));
+   await op('write',{filepath:'Ops/capped.md',content:state});
+   assert.equal((await fs.readdir(folder)).filter(x=>x.startsWith('capped-')).length,5);
+   await op('write',{filepath:'Ops/other-capped.md',content:'otheroriginalmarker'});
+   await op('write',{filepath:'Ops/other-capped.md',content:'otherreplacementmarker'});
+   assert.equal((await fs.readdir(folder)).filter(x=>x.startsWith('other-capped-')).length,1);
+ });
  await check('backslash archive paths do not recursively archive historical notes',async()=>{
   await op('write',{filepath:'_Archive\\historical.md',content:'historicalmarker'});
   const count=[...b.indexer.index.files.keys()].filter(p=>p.startsWith('_Archive/')).length;
@@ -226,7 +249,7 @@ async function operations() {
 async function registration() {
  await check('manifest and activation expose exactly one native tool, 14 operations and preserved contributions',async()=>{
   const manifest=JSON.parse(await fs.readFile(path.join(runtime,'../package.json'),'utf8'));
-  assert.equal(manifest.version,'2.12.0');assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
+  assert.equal(manifest.version,require('../package.json').version);assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
   assert.deepEqual(manifest.contributes.languageModelTools.map(t=>t.name),['obsidian_brain']);const tool=manifest.contributes.languageModelTools[0];assert.equal(tool.toolReferenceName,'obsidian_brain');
   const operations=['search','list','read','write','append','quick_note','str_replace','insert','delete','move','summarize_note','list_recent','auto_tag','related_notes'];assert.deepEqual(tool.inputSchema.properties.operation.enum,operations);assert.equal(tool.inputSchema.properties.max_chars.type,'number');
   assert.deepEqual(manifest.contributes.chatPromptFiles.map(p=>p.name).sort(),['brain-auto-save','brain-compress','brain-recall','brain-remember','brain-summarize']);assert(manifest.contributes.chatInstructions.some(p=>p.name==='brain-usage'));assert(manifest.contributes.configuration.properties['obsidianBrain.vaultPath']);assert(!manifest.contributes.configuration.properties['obsidianBrain.filesystemAllowedDirectories']);
