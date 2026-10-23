@@ -211,6 +211,7 @@ export class VaultIndexer {
             const paths = this.index.tagIndex.get(tag);
             if (paths) {
                 for (const filepath of paths) {
+                    if (filepath === '_Inbox/session-activity-log.md') continue;
                     const file = this.index.files.get(filepath);
                     if (file && !seenPaths.has(filepath)) {
                         seenPaths.add(filepath);
@@ -239,6 +240,9 @@ export class VaultIndexer {
         
         // Score each file
         for (const [filepath, file] of this.index.files) {
+            // The activity checkpoint is indexed for metadata/recency but is
+            // never a search hit. Save-history keywords are not user knowledge.
+            if (filepath === '_Inbox/session-activity-log.md') continue;
             let score = 0;
             let matchType: IndexSearchResult['matchType'] = 'content';
             let context: string | undefined;

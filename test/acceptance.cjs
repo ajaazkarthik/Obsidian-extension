@@ -134,7 +134,7 @@ async function operations() {
   await op('append',{filepath:'Ops/note.md',content:'appendbodymarker'});
   assert((await op('search',{query:'appendbodymarker'})).includes('Ops/note.md'));
   await op('insert',{filepath:'Ops/note.md',insert_line:2,content:'insertbodymarker'});
-  const checkpoint=await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8');assert(checkpoint.includes('Save count: 3'));assert(checkpoint.includes('write /Ops/note.md'));assert(checkpoint.includes('append Ops/note.md'));assert(checkpoint.includes('insert Ops/note.md'));assert(await hit(b.indexer,'activity','_Inbox/session-activity-log.md'));assert.equal(b.saveCount,3);
+  const checkpoint=await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8');assert(checkpoint.includes('Save count: 3'));assert(checkpoint.includes('write /Ops/note.md'));assert(checkpoint.includes('append Ops/note.md'));assert(checkpoint.includes('insert Ops/note.md'));assert(b.indexer.getFileInfo('_Inbox/session-activity-log.md'));assert(!await hit(b.indexer,'append','_Inbox/session-activity-log.md'));assert.equal(b.saveCount,3);
   await op('str_replace',{filepath:'Ops/note.md',old_str:'initialbodymarker',new_str:'replacementbodymarker'});
   assert(!await hit(b.indexer,'initialbodymarker','Ops/note.md'));assert(await hit(b.indexer,'replacementbodymarker','Ops/note.md'));
   await op('move',{filepath:'Ops/note.md',destination:'Ops/moved.md'});assert(!b.indexer.getFileInfo('Ops/note.md'));assert(await hit(b.indexer,'replacementbodymarker','Ops/moved.md'));
@@ -235,9 +235,69 @@ async function operations() {
   await invoke(fresh,'write',{filepath:'Ops/rolling.md',content:'rollingmarker'});await invoke(fresh,'str_replace',{filepath:'Ops/rolling.md',old_str:'missing',new_str:'x'});assert.equal(fresh.saveCount,1);
   for(let i=0;i<23;i++)await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'activity '+i});assert.equal(fresh.saveCount,24);assert.equal(fresh.saveActivity.length,20);assert(fresh.saveActivity[0].endsWith('append Ops/rolling.md'));
   const log=await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8');const last=log.slice(log.lastIndexOf('## '));assert(last.includes('Save count: 24'));assert.equal(last.match(/^- /gm).length,20);assert(!/\/compact|tokens|context.*%/i.test(log));
-  const append=fresh.filesystemBackend.appendFile.bind(fresh.filesystemBackend);fresh.filesystemBackend.appendFile=async(p,c)=>{if(p==='_Inbox/session-activity-log.md')throw Error('synthetic checkpoint failure');return append(p,c);};
-  const originalLog=console.log;let failures=0;console.log=(...args)=>{if(String(args[0]).includes('Could not persist activity log'))failures++;else originalLog(...args);};
-  try {for(let i=0;i<3;i++)assert((await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'still saved'})).includes('Successfully appended'));assert.equal(fresh.saveCount,27);assert.equal(failures,3);} finally {console.log=originalLog;fresh.filesystemBackend.appendFile=append;}
+  const append=fresh.filesystemBackend.appendActivityCheckpoint.bind(fresh.filesystemBackend);fresh.filesystemBackend.appendActivityCheckpoint=async()=>{throw Error('synthetic checkpoint failure');};
+  const originalLog=console.log;let failures=0;console.log=(...args)=>{if(String(args[0]).includes('Could not persist activity checkpoint'))failures++;else originalLog(...args);};
+  try {for(let i=0;i<3;i++)assert((await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'still saved'})).includes('Successfully appended'));assert.equal(fresh.saveCount,27);assert.equal(failures,1);} finally {console.log=originalLog;fresh.filesystemBackend.appendActivityCheckpoint=append;}
+ });
+ await check('hidden private save ledger, checkpoint summaries, no search result contamination',async()=>{
+  const brain=new BrainTool({subscriptions:[]});instances.push(brain);await brain.initialize();
+  await invoke(brain,'write',{filepath:'Ops/ledger-check.md',content:'stablecontent'});
+  const privateLog=path.join(vault,'.obsidian-brain/saves.log');
+  assert((await fs.readFile(privateLog,'utf8')).includes('Ops/ledger-check.md'));
+  assert(!brain.indexer.getFileInfo('.obsidian-brain/saves.log'));
+  assert(!(await invoke(brain,'list',{directory:''})).includes('.obsidian-brain'));
+  await invoke(brain,'append',{filepath:'Ops/ledger-check.md',content:'append'});
+  assert(!brain.indexer.getFileInfo('_Inbox/session-activity-log.md') || !await hit(brain.indexer,'append','_Inbox/session-activity-log.md'));
+  await invoke(brain,'append',{filepath:'Ops/ledger-check.md',content:'append'});
+  assert(brain.indexer.getFileInfo('_Inbox/session-activity-log.md'),'checkpoint indexes only after third save');
+  assert(!await hit(brain.indexer,'append','_Inbox/session-activity-log.md'));
+  assert(!(await invoke(brain,'search',{query:'append'})).includes('_Inbox/session-activity-log.md'));
+  await brain.dispose();
+ });
+ await check('migrates 2.15.1 standalone log lines without deleting checkpoint history',async()=>{
+  const oldVault=await fs.mkdtemp(path.join(os.tmpdir(),'brain-legacy-activity-'));
+  const current=vault;
+  let brain;
+  try {
+   await fs.mkdir(path.join(oldVault,'_Inbox'),{recursive:true});
+   const oldLog=[
+    '- 2026-10-23T01:00:00.000Z append Legacy/before.md',
+    '## 2026-10-23T01:00:00.000Z — Checkpoint',
+    '',
+    'Save count: 3',
+    '',
+    'Recent save activity (up to 20):',
+    '- 2026-10-23T01:00:01.000Z write Legacy/one.md',
+    '- 2026-10-23T01:00:02.000Z append Legacy/two.md',
+    '- 2026-10-23T01:00:03.000Z insert Legacy/three.md',
+    '- 2026-10-23T01:00:04.000Z append Legacy/unindexed.md',
+    '- 2026-10-23T01:00:05.000Z append Legacy/also-unindexed.md',
+    ''
+   ].join('\n');
+   await fs.writeFile(path.join(oldVault,'_Inbox/session-activity-log.md'),oldLog);
+   setVault(oldVault);
+   brain=new BrainTool({subscriptions:[]});instances.push(brain);await brain.initialize();
+   for(let i=0;i<3;i++)await invoke(brain,'append',{filepath:'Legacy/live.md',content:'append'});
+   const cleaned=await fs.readFile(path.join(oldVault,'_Inbox/session-activity-log.md'),'utf8');
+   assert(cleaned.includes('Legacy/one.md'));assert(cleaned.includes('Legacy/two.md'));assert(cleaned.includes('Legacy/three.md'));
+   assert(!cleaned.includes('Legacy/unindexed.md'));assert(!cleaned.includes('Legacy/also-unindexed.md'));
+   assert(!cleaned.includes('Legacy/before.md'));assert(cleaned.includes('Save count: 3'));
+   assert(!await hit(brain.indexer,'append','_Inbox/session-activity-log.md'));
+  } finally {
+   if(brain)await brain.dispose();
+   setVault(current);
+   await fs.rm(oldVault,{recursive:true,force:true});
+  }
+ });
+ await check('rotates private saves.log after 2000 lines, retaining latest 1000',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brain-log-rotation-'));
+  const {FilesystemBackend}=require(runtime+'/filesystemBackend.js');
+  try {
+   const backend=new FilesystemBackend();backend.refreshVaultPath(dir);
+   for(let n=0;n<2001;n++)await backend.appendSaveMarker('- 2026-10-23T02:00:00.000Z append item'+n+'.md');
+   const lines=(await fs.readFile(path.join(dir,'.obsidian-brain/saves.log'),'utf8')).trim().split('\n');
+   assert.equal(lines.length,1000);assert(lines[0].includes('item1001.md'));assert(lines.at(-1).includes('item2000.md'));
+  } finally {await fs.rm(dir,{recursive:true,force:true});}
  });
  await check('12-operation save reminder without context estimates or compact directives',async()=>{
   const fresh=new BrainTool({subscriptions:[]});instances.push(fresh);await fresh.initialize();
@@ -251,11 +311,7 @@ async function registration() {
   const manifest=JSON.parse(await fs.readFile(path.join(runtime,'../package.json'),'utf8'));
   assert.equal(manifest.version,require('../package.json').version);
   const changes=await fs.readFile(path.join(__dirname,'../CHANGELOG.md'),'utf8');
-  assert(changes.includes('## [2.15.1]'));
-  assert(changes.includes('### [2.15.0-hooks]'));
-  assert(!changes.includes('## [2.12.0] - 2026-10-14'));
-  assert(changes.includes('hard-coding 2.11.1'));
-  assert(!changes.includes('25,000 vs 8'));assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
+  assert(changes.split('\n').some(l=>l.startsWith('## ['+manifest.version+']')),'changelog must have a release header matching package.json');assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
   assert.deepEqual(manifest.contributes.languageModelTools.map(t=>t.name),['obsidian_brain']);const tool=manifest.contributes.languageModelTools[0];assert.equal(tool.toolReferenceName,'obsidian_brain');
   const operations=['search','list','read','write','append','quick_note','str_replace','insert','delete','move','summarize_note','list_recent','auto_tag','related_notes'];assert.deepEqual(tool.inputSchema.properties.operation.enum,operations);assert.equal(tool.inputSchema.properties.max_chars.type,'number');
   assert.deepEqual(manifest.contributes.chatPromptFiles.map(p=>p.name).sort(),['brain-auto-save','brain-compress','brain-recall','brain-remember','brain-summarize']);assert(manifest.contributes.chatInstructions.some(p=>p.name==='brain-usage'));assert(manifest.contributes.configuration.properties['obsidianBrain.vaultPath']);assert(!manifest.contributes.configuration.properties['obsidianBrain.filesystemAllowedDirectories']);
@@ -478,7 +534,9 @@ async function hooks() {
     const brain=new BrainTool({subscriptions:[]});instances.push(brain);await brain.initialize();
     assert((await invoke(brain,'quick_note',{content:'firstsavehookmarker'})).includes('Quick note saved'));
     assert.equal(brain.saveCount,1);
-    assert((await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8')).includes('quick_note'));
+    assert((await fs.readFile(path.join(vault,'.obsidian-brain/saves.log'),'utf8')).includes('quick_note'));
+    assert(!await exists(path.join(vault,'_Inbox/session-activity-log.md')) ||
+      !(await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8')).includes('firstsavehookmarker'));
     assert.equal(guard('Stop',ws),'');
     await brain.dispose();
     guard('SessionStart',empty);

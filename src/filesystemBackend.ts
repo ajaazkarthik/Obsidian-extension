@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'node:fs/promises';
 
 /** Resolve configuration on the extension host (including remote hosts). */
 export function resolveVaultPath(configured: string | undefined, platform: NodeJS.Platform = process.platform, home: string = os.homedir()): string {
@@ -52,6 +53,7 @@ export async function prepareVault(vaultPath: string): Promise<void> {
 /** Native vault I/O shared by the tool and indexer on every supported platform. */
 export class FilesystemBackend {
     private vaultPath = '';
+    private savesLogCount: number | undefined;
 
     /**
      * Get the current vault path
@@ -64,6 +66,7 @@ export class FilesystemBackend {
      * Refresh the vault path from settings
      */
     refreshVaultPath(vaultPath: string = configuredVaultPath()): void {
+        if (this.vaultPath !== vaultPath) this.savesLogCount = undefined;
         this.vaultPath = vaultPath;
     }
 
@@ -128,6 +131,57 @@ export class FilesystemBackend {
 
         const newContent = existingContent ? `${existingContent}\n${content}` : content;
         await this.writeFile(filePath, newContent);
+    }
+
+    /**
+     * Append a one-line save marker outside the indexed vault. Native append
+     * keeps a save O(1) instead of reading and re-indexing a growing Markdown log.
+     * All callers serialize through BrainTool.runExclusive.
+     *
+     * Rotate AFTER crossing 2,000 lines, retaining the latest 1,000 events.
+     * The hidden .obsidian-brain directory is skipped by the indexer and list.
+     */
+    async appendSaveMarker(line: string): Promise<void> {
+        const filename = this.resolvePath('.obsidian-brain/saves.log');
+        await fs.mkdir(path.dirname(filename), {recursive: true});
+        if (this.savesLogCount === undefined) {
+            try {
+                const content = await fs.readFile(filename, 'utf8');
+                this.savesLogCount = content.split('\n').filter(Boolean).length;
+            } catch (error) {
+                if (!isFileNotFound(error)) throw error;
+                this.savesLogCount = 0;
+            }
+        }
+        // Bound the line length to protect log parsing and memory usage.
+        const safeLine = line.replace(/[\r\n]/g, ' ').slice(0, 1024);
+        await fs.appendFile(filename, safeLine + '\n', {encoding: 'utf8'});
+        this.savesLogCount++;
+        if (this.savesLogCount > 2000) {
+            try {
+                const lines = (await fs.readFile(filename, 'utf8')).split('\n').filter(Boolean);
+                const recent = lines.slice(-1000);
+                const replacement = filename + '.' + process.pid + '.tmp';
+                try {
+                    await fs.writeFile(replacement, recent.join('\n') + '\n', 'utf8');
+                    await fs.rename(replacement, filename);
+                } finally {
+                    await fs.rm(replacement, {force: true}).catch(() => {});
+                }
+                this.savesLogCount = recent.length;
+            } catch (error) {
+                // Leave the appended event intact, and recount on the next save.
+                this.savesLogCount = undefined;
+                throw error;
+            }
+        }
+    }
+
+    /** Append a readable Markdown checkpoint without re-reading the entire log. */
+    async appendActivityCheckpoint(checkpoint: string): Promise<void> {
+        const filename = this.resolvePath('_Inbox/session-activity-log.md');
+        await fs.mkdir(path.dirname(filename), {recursive: true});
+        await fs.appendFile(filename, '\n' + checkpoint, {encoding: 'utf8'});
     }
 
     /**

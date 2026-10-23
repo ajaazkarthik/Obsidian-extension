@@ -33,6 +33,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
     private saveCount = 0;
     private saveActivity: string[] = [];
     private checkpointWrite: Promise<void> = Promise.resolve();
+    private migratedLegacyLog = false;
     private operationQueue: Promise<void> = Promise.resolve();
 
     constructor(private context: vscode.ExtensionContext) {
@@ -64,6 +65,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
             this.seenHashes.clear();
             this.saveCount = 0;
             this.saveActivity = [];
+            this.migratedLegacyLog = false;
         }
         await this.indexer.initialize();
     }
@@ -98,20 +100,53 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
         this.saveActivity.push(activity);
         this.saveActivity = this.saveActivity.slice(-20);
 
-        // A successful FIRST save must be visible to the hook immediately.
-        // The every-third summary remains unchanged and comes AFTER the line,
-        // preserving the original activity-section layout.
+        // Every save gets ONE cheap, unindexed, non-Markdown line.
+        // Only every third save modifies/re-indexes the readable Markdown summary.
         const checkpoint = this.saveCount % 3 === 0
-            ? `\n\n## ${new Date().toISOString()} — Checkpoint\n\nSave count: ${this.saveCount}\n\nRecent save activity (up to 20):\n${this.saveActivity.map(a => '- ' + a).join('\n')}\n`
-            : '';
+            ? `## ${new Date().toISOString()} — Checkpoint\n\nSave count: ${this.saveCount}\n\nRecent save activity (up to 20):\n${this.saveActivity.map(a => '- ' + a).join('\n')}\n`
+            : undefined;
         this.checkpointWrite = this.checkpointWrite.then(async () => {
             try {
-                const logPath = '_Inbox/session-activity-log.md';
-                await this.filesystemBackend.appendFile(logPath, '- ' + activity + checkpoint);
-                await this.indexer.indexFileImmediately(logPath);
+                await this.filesystemBackend.appendSaveMarker('- ' + activity);
             } catch (error) {
-                // Successful note writes remain successful if best-effort log I/O fails.
-                console.log('[ObsidianBrain] Could not persist activity log:', error);
+                console.log('[ObsidianBrain] Could not persist save marker:', error);
+            }
+            if (checkpoint !== undefined) {
+                try {
+                    const logPath = '_Inbox/session-activity-log.md';
+                    // One-time migration removes only 2.15.1's standalone
+                    // per-save lines, preserving historical checkpoint lists.
+                    if (!this.migratedLegacyLog) {
+                        this.migratedLegacyLog = true;
+                        try {
+                            const old = await this.filesystemBackend.readFile(logPath);
+                            let inList = false;
+                            let listCount = 0;
+                            let expected = 0;
+                            const clean = old.split('\n').filter(line => {
+                                if (line.startsWith('## ')) { inList = false; expected = 0; }
+                                const count = /^Save count: (\d+)$/.exec(line);
+                                if (count) expected = Math.min(20, Number(count[1]));
+                                if (line.startsWith('Recent save activity (up to 20):')) {
+                                    inList = true;
+                                    listCount = 0;
+                                }
+                                if (/^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+(?:write|append|quick_note|str_replace|insert)\s+/.test(line)) {
+                                    if (inList && listCount < expected) { listCount++; return true; }
+                                    return false;
+                                }
+                                return true;
+                            }).join('\n');
+                            if (old !== clean) await this.filesystemBackend.writeFile(logPath, clean);
+                        } catch (error) {
+                            if (!isFileNotFound(error)) throw error;
+                        }
+                    }
+                    await this.filesystemBackend.appendActivityCheckpoint(checkpoint);
+                    await this.indexer.indexFileImmediately(logPath);
+                } catch (error) {
+                    console.log('[ObsidianBrain] Could not persist activity checkpoint:', error);
+                }
             }
         });
         await this.checkpointWrite;

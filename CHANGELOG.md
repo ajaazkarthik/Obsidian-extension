@@ -2,6 +2,19 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.15.2] - 2026-10-23
+
+- Moved per-save tracking from the indexed Markdown activity log to the hidden, unindexed `.obsidian-brain/saves.log`, using a native append and rotation after 2,000 lines (retaining the newest 1,000). The guard reads only the private ledger, including sessions that cross a rotation.
+- Restored `_Inbox/session-activity-log.md` to an every-third-save checkpoint summary, indexed only on checkpoints and excluded from general search results. Cleans up legacy 2.15.1 standalone save lines on its first new checkpoint without removing existing checkpoint histories.
+- Acceptance covers the hidden log, bounded rotation, legacy-log migration, first-save/zero-save hook behaviour, and search isolation. **Measured GitHub Actions 300-append benchmark** (identical 50-note corpus, 2026-10-23; medians over first vs last 50 appends):
+  - Linux: reproduced 2.15.1 **1.883 → 6.533 ms**; 2.15.2 **0.829 → 1.176 ms** (**1.419×**, under the 1.5× limit). Total time for 300 appends: **1375.033 → 604.085 ms**.
+  - macOS: reproduced 2.15.1 **1.424 → 5.984 ms**; 2.15.2 **0.755 → 0.983 ms** (**1.301×**). Total: **1260.039 → 477.097 ms**.
+  - Windows: reproduced 2.15.1 **3.576 → 11.709 ms**; 2.15.2 **2.032 → 2.916 ms** (**1.435×**). Total: **2348.781 → 1156.635 ms**.
+  - These results execute actual compiled BrainTool append/index flows; the old recordSave routine is reconstructed from 2.15.1. Timings are environment-dependent and not production-vault latency guarantees.
+- Corrected historical folded hook entry to reflect 2.15.1's explicit opt-in installation; removed assertions pinning changelog prose.
+- MCP initializes with the client's version only for supported versions 2024-11-05, 2025-03-26 and 2025-06-18; unsupported versions negotiate to the latest supported 2025-06-18. Added coverage for both cases.
+- No DLP features added.
+
 ## [2.15.1] - 2026-10-23
 
 - Corrected MCP smoke-test failure paths: missing server, early exit, spawn error and timeout reject pending work, emit diagnostic stderr and exit nonzero. Tested against a missing script and deliberately silent process.
@@ -23,10 +36,10 @@ All notable changes to the "obsidian-brain" extension will be documented in this
 
 ### [2.15.0-hooks] - folded into 2.15.0
 
-- **Portable brain-usage enforcement.** The extension now installs the `brain_guard` hook, its hook config and the brain-first-workflow instruction into the user-level Copilot folders (`~/.copilot/hooks`, `~/.copilot/instructions`) at activation. Enforcement therefore travels with the extension to every workspace and every machine — no per-repository setup.
+- **Opt-in brain-usage enforcement.** Hook assets ship with the extension, but 2.15.1 makes executable hook installation opt-in (default false), with a one-time informational prompt. The supported Copilot user-level folder can be used when enabled; workspace-owned hooks take precedence.
 - The hook fires on `SessionStart`, `PostToolUse`, `PreCompact` and `Stop`: it injects the protocol at session start, reminds the agent when 5 tool calls pass with no brain save, and blocks completion once per session when nothing was saved.
 - Installation is idempotent and non-destructive: every generated file carries an `obsidian-brain-managed` marker, and a file without that marker is treated as user-authored and never overwritten. Failures are logged and never block activation.
-- Added `obsidianBrain.installAgentHooks` (default `true`) to opt out.
+- `obsidianBrain.installAgentHooks` now defaults to `false` (opt-in); existing user-owned configurations are preserved.
 
 
 ## [2.11.1] - 2026-10-13

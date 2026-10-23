@@ -1,6 +1,6 @@
 # Obsidian Brain
 
-Obsidian Brain 2.15.1 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool. VS Code needs no MCP server; an optional zero-dependency MCP stdio adapter also makes the same tool available in Claude Code.
+Obsidian Brain 2.15.2 is a native VS Code language model tool for persistent knowledge in an Obsidian vault. It exposes one tool, `obsidian_brain`, with no separate memory, filesystem or chat-history tool. VS Code needs no MCP server; an optional zero-dependency MCP stdio adapter also makes the same tool available in Claude Code.
 
 Leave `obsidianBrain.vaultPath` blank for automatic setup: Windows uses `C:\workspace\obsidian-vault`; macOS and Linux use `~/workspace/obsidian-vault`. The extension creates the default vault and standard folders on first use. Set an absolute path (or `~/…`) to use an existing vault instead. Paths remain machine-specific with workspace overrides supported, and are resolved on the extension host, including SSH/WSL hosts.
 
@@ -31,7 +31,7 @@ The version-3 disk cache stores file metadata and compact path-ID tag and counte
 
 Inline tags exclude code fences, inline code, URL fragments, line anchors and six/eight-character hex colours containing digits. YAML bracket arrays and block lists work with LF and CRLF. Indexing, summaries and auto-tag filtering share the same extractor.
 
-Every successful `write`, `append`, `quick_note`, `str_replace` or `insert` immediately appends a timestamped save line; every third successful save additionally appends a summary of up to 20 recent activity entries to `_Inbox/session-activity-log.md`. Duplicate captures and failed saves do not count. Every 12 operations, a reminder asks you to save useful progress. Checkpoints record file activity; the extension does not monitor context or token usage and emits no automatic compaction directives.
+Every successful `write`, `append`, `quick_note`, `str_replace` or `insert` appends a single timestamped record to the hidden, unindexed `.obsidian-brain/saves.log` (rotated at 2,001 lines, retaining 1,000). Every third save additionally updates the indexed `_Inbox/session-activity-log.md` Markdown checkpoint with up to 20 recent actions. The checkpoint is intentionally excluded from search hits, so a search for `append` returns notes, not the activity summary. Duplicate captures and failed saves do not count. Every 12 operations, a reminder asks you to save useful progress. Checkpoints record file activity; the extension does not monitor context or token usage and emits no automatic compaction directives.
 
 ## Claude Code via MCP (optional)
 
@@ -48,11 +48,11 @@ You can also run the server directly with `OBSIDIAN_VAULT_PATH=/absolute/path/to
 
 ## Brain-usage enforcement (opt-in)
 
-**Hooks are disabled by default** in 2.15.1. Enabling `obsidianBrain.installAgentHooks` installs executable hooks into the [supported Copilot user hook directory](https://code.visualstudio.com/docs/agent-customization/hooks): `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/`). On first activation, the extension displays an informational prompt offering to enable them. VS Code's **Copilot session target** must be selected; Claude and Codex harnesses have their own event contracts.
+**Hooks are disabled by default** in 2.15.2. Enabling `obsidianBrain.installAgentHooks` installs executable hooks into the [supported Copilot user hook directory](https://code.visualstudio.com/docs/agent-customization/hooks): `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/`). On first activation, the extension displays an informational prompt offering to enable them. VS Code's **Copilot session target** must be selected; Claude and Codex harnesses have their own event contracts.
 
 The installed JSON uses Copilot hook schema `version: 1`, `sessionStart`, `postToolUse`, `preCompact`, and `agentStop`, and `timeoutSec`. The hook script is Python 3; if the runtime cannot locate the Python interpreter, installation skips without blocking the extension. Executable hook installation remains explicit and all user-owned hook files are preserved. Only an older marker-owned configuration is removed on opt-out.
 
-Each successful brain save immediately records one timestamped line in `_Inbox/session-activity-log.md`, allowing the guard to detect the **first** successful save; the existing every-third-save summary remains. `agentStop` is blocked once when no save was recorded. An existing workspace `.github/hooks/*.json` stop guard disables creation of a duplicate user hook config. `PreCompact` does **not** mention PROGRESS.md.
+Each successful brain save immediately records one timestamped line in the hidden `.obsidian-brain/saves.log`, allowing the guard to detect the **first** successful save without re-indexing the vault; the every-third-save Markdown checkpoint summary remains. Rotation preserves the last 1,000 lines and the hook supports sessions spanning that rotation. `agentStop` is blocked once when no save was recorded. An existing workspace `.github/hooks/*.json` stop guard disables creation of a duplicate user hook config. `PreCompact` does **not** mention PROGRESS.md.
 
 The Copilot user paths are documented, but this release does not claim a manual live editor lifecycle confirmation. Verify activation with VS Code's Hooks customization view and the selected session harness before relying on enforced behaviour. The Python guard is best-effort and not a security boundary.
 
@@ -72,7 +72,7 @@ npm test
 npm run package
 ```
 
-The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.15.1.vsix`, inspects its manifest, MCP adapter and runtime, and reruns both acceptance and MCP tests against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the hook assets, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
+The package script compiles the maintained TypeScript, runs acceptance checks, builds `releases/obsidian-brain-2.15.2.vsix`, inspects its manifest, MCP adapter and runtime, and reruns both acceptance and MCP tests against the extracted package. It does not install the extension or reload VS Code. The package contains runtime modules, declarations, prompts, the hook assets, the agent and project metadata; source maps remain in the checkout alongside generated JavaScript.
 
 The acceptance harness uses the actual compiled `BrainTool` and `VaultIndexer`, a minimal VS Code shim, uniquely named disposable vaults, controlled timestamps and mocked timers. The MCP test exercises the real stdio process and verifies stdout protocol hygiene. Focused groups can run with `node test/acceptance.cjs index`, `tags`, `timers`, `operations` , `registration`, `platform` or `hooks`. `BRAIN_RUNTIME` selects a different compiled runtime for package verification. `test/baseline.cjs` documents the defects reproduced against the original 2.9 runtime; run it only with `BRAIN_RUNTIME` pointing at that isolated baseline.
 
@@ -82,6 +82,6 @@ Live VS Code UI behavior, host-managed response spilling and performance on a pr
 
 MIT. Publisher and extension identity remain `ubanishathanvenkatesan.obsidian-brain`.
 
-CI runs the compile, acceptance and packaged-runtime checks on Windows, macOS and Linux. Vault operations run in sequence so parallel appends and setting changes preserve content. Read failures from file locks or permissions are reported; only missing files are created by append/insert.
+CI runs the compile, acceptance, packaged-runtime, real index-removal and real 300-append performance checks on Windows, macOS and Linux. Vault operations run in sequence so parallel appends and setting changes preserve content. Read failures from file locks or permissions are reported; only missing files are created by append/insert.
 
 Generated `out/`, `node_modules/` and `*.vsix` are deliberately **untracked**. Cross-platform CI on Windows, macOS and Linux installs dependencies, compiles, tests and packages from source. `node research/measure-index-removal.cjs` exercises the real compiled VaultIndexer with 1,000 disposable notes, timing 100 removals using the previous vocabulary-scan method and the reverse per-file postings, on the same corpus.
