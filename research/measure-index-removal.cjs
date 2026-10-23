@@ -56,6 +56,7 @@ function installLegacyRemoval(indexer) {
         assert.equal(before.getStats().fileCount,count);
         assert.equal(after.getStats().fileCount,count);
         assert(before.index.wordIndex.size>=14000,'corpus must contain substantial vocabulary');
+        const initialTerms=before.index.wordIndex.size;
         installLegacyRemoval(before);
         const remove = (indexer, start, end) => {
             const t = performance.now();
@@ -73,7 +74,7 @@ function installLegacyRemoval(indexer) {
         const modern = [...after.index.wordIndex].map(([term,postings])=>[term,[...postings]]).sort((a,b)=>a[0].localeCompare(b[0]));
         assert.deepEqual(all,modern,'both index removal implementations must retain identical postings');
         console.log('VaultIndexer measured 1,000-note benchmark (same corpus, Node '+process.version+')');
-        console.log('Notes removed: 100 (+10 warmup), initial body terms: '+(all.length+110*16)+' approximately');
+        console.log('Notes removed: 100 (+10 warmup), initial distinct body terms: '+initialTerms);
         console.log('Original removeFileImmediately: '+previousMs.toFixed(2)+' ms');
         console.log('Reverse-map removeFileImmediately: '+currentMs.toFixed(2)+' ms');
         console.log('Measured speed ratio: '+(previousMs/currentMs).toFixed(2)+'x (environment-dependent)');
