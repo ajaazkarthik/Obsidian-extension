@@ -33,7 +33,7 @@ async function dispatch(message) {
             case 'initialize':
                 await start();
                 result = {
-                    protocolVersion: message.params?.protocolVersion === '2024-11-05' ? message.params.protocolVersion : '2024-11-05',
+                    protocolVersion: message.params?.protocolVersion || '2024-11-05',
                     capabilities: {tools: {}},
                     serverInfo: {name: 'obsidian-brain', version: manifest.version}
                 };
