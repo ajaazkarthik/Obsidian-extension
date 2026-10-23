@@ -250,7 +250,7 @@ async function registration() {
  await check('manifest and activation expose exactly one native tool, 14 operations and preserved contributions',async()=>{
   const manifest=JSON.parse(await fs.readFile(path.join(runtime,'../package.json'),'utf8'));
   assert.equal(manifest.version,require('../package.json').version);
-  const changes=await fs.readFile(path.join(runtime,'../CHANGELOG.md'),'utf8');
+  const changes=await fs.readFile(path.join(__dirname,'../CHANGELOG.md'),'utf8');
   assert(changes.includes('## [2.15.1]'));
   assert(changes.includes('### [2.15.0-hooks]'));
   assert(!changes.includes('## [2.12.0] - 2026-10-14'));
