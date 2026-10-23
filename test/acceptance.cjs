@@ -254,6 +254,41 @@ async function operations() {
   assert(!(await invoke(brain,'search',{query:'append'})).includes('_Inbox/session-activity-log.md'));
   await brain.dispose();
  });
+ await check('migrates 2.15.1 standalone log lines without deleting checkpoint history',async()=>{
+  const oldVault=await fs.mkdtemp(path.join(os.tmpdir(),'brain-legacy-activity-'));
+  const current=vault;
+  let brain;
+  try {
+   await fs.mkdir(path.join(oldVault,'_Inbox'),{recursive:true});
+   const oldLog=[
+    '- 2026-10-23T01:00:00.000Z append Legacy/before.md',
+    '## 2026-10-23T01:00:00.000Z — Checkpoint',
+    '',
+    'Save count: 3',
+    '',
+    'Recent save activity (up to 20):',
+    '- 2026-10-23T01:00:01.000Z write Legacy/one.md',
+    '- 2026-10-23T01:00:02.000Z append Legacy/two.md',
+    '- 2026-10-23T01:00:03.000Z insert Legacy/three.md',
+    '- 2026-10-23T01:00:04.000Z append Legacy/unindexed.md',
+    '- 2026-10-23T01:00:05.000Z append Legacy/also-unindexed.md',
+    ''
+   ].join('\n');
+   await fs.writeFile(path.join(oldVault,'_Inbox/session-activity-log.md'),oldLog);
+   setVault(oldVault);
+   brain=new BrainTool({subscriptions:[]});instances.push(brain);await brain.initialize();
+   for(let i=0;i<3;i++)await invoke(brain,'append',{filepath:'Legacy/live.md',content:'append'});
+   const cleaned=await fs.readFile(path.join(oldVault,'_Inbox/session-activity-log.md'),'utf8');
+   assert(cleaned.includes('Legacy/one.md'));assert(cleaned.includes('Legacy/two.md'));assert(cleaned.includes('Legacy/three.md'));
+   assert(!cleaned.includes('Legacy/unindexed.md'));assert(!cleaned.includes('Legacy/also-unindexed.md'));
+   assert(!cleaned.includes('Legacy/before.md'));assert(cleaned.includes('Save count: 3'));
+   assert(!await hit(brain.indexer,'append','_Inbox/session-activity-log.md'));
+  } finally {
+   if(brain)await brain.dispose();
+   setVault(current);
+   await fs.rm(oldVault,{recursive:true,force:true});
+  }
+ });
  await check('rotates private saves.log after 2000 lines, retaining latest 1000',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brain-log-rotation-'));
   const {FilesystemBackend}=require(runtime+'/filesystemBackend.js');
