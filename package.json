@@ -3,7 +3,7 @@
   "publisher": "ubanishathanvenkatesan",
   "displayName": "Obsidian Brain - Global Agent Memory",
   "description": "Global AI agent knowledge persistence using an Obsidian vault, with indexed search, related notes and factual save checkpoints.",
-  "version": "2.15.2",
+  "version": "2.15.3",
   "license": "MIT",
   "engines": {
     "vscode": "^1.95.0"
