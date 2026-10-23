@@ -142,7 +142,7 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
                             if (!isFileNotFound(error)) throw error;
                         }
                     }
-                    await this.filesystemBackend.appendFile(logPath, checkpoint);
+                    await this.filesystemBackend.appendActivityCheckpoint(checkpoint);
                     await this.indexer.indexFileImmediately(logPath);
                 } catch (error) {
                     console.log('[ObsidianBrain] Could not persist activity checkpoint:', error);
