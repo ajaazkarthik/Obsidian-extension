@@ -199,14 +199,10 @@ def handle_session_start(payload: dict) -> int:
             "stop_blocked": False,
         },
     )
-    emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": PROTOCOL_TEXT,
-            }
-        }
-    )
+    if os.environ.get('BRAIN_GUARD_COPILOT') == '1':
+        emit({'additionalContext': PROTOCOL_TEXT})
+    else:
+        emit({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': PROTOCOL_TEXT}})
     return 0
 
 
@@ -242,20 +238,12 @@ def handle_post_tool_use(payload: dict) -> int:
     save_state(state_file, state)
 
     elapsed_min = int((time.time() - since) / 60)
-    emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": clip(
-                    f"BRAIN CHECKPOINT DUE: {calls} tool calls and ~{elapsed_min} min "
-                    "into this session with no brain save recorded.\n"
-                    "Capture the most valuable insight you have right now with "
-                    'obsidian_brain: operation="quick_note". Do not wait until the end.\n'
-                    + PROTOCOL_TEXT
-                ),
-            }
-        }
-    )
+    message = clip(f'BRAIN CHECKPOINT DUE: {calls} tool calls and ~{elapsed_min} min into this session with no brain save recorded.\n' +
+                   'Capture the most valuable insight with obsidian_brain: operation="quick_note".\n' + PROTOCOL_TEXT)
+    if os.environ.get('BRAIN_GUARD_COPILOT') == '1':
+        emit({'additionalContext': message})
+    else:
+        emit({'hookSpecificOutput': {'hookEventName': 'PostToolUse', 'additionalContext': message}})
     return 0
 
 
@@ -269,13 +257,14 @@ def handle_pre_compact(payload: dict) -> int:
         saves = saves_since(vault, float(state.get("session_start", 0)))
         saved_note = f" Brain saves this session: {len(saves)}."
 
+    if os.environ.get('BRAIN_GUARD_COPILOT') == '1':
+        return 0  # preCompact output is not consumed by the shared Copilot harness
     emit(
         {
             "systemMessage": clip(
                 "CONTEXT COMPACTION: preserve only unrecoverable task state."
                 + saved_note
-                + "\nIf work is incomplete, update PROGRESS.md ## In Progress with "
-                "done, next action, and key file.\n"
+                + "\nPreserve unrecoverable pending decisions and next actions in the brain when useful.\n"
                 "Write one brain checkpoint only when the state is not recoverable "
                 "from the repository.\n"
                 "Do not commit unless the user explicitly requested a commit."
@@ -292,7 +281,7 @@ def handle_stop(payload: dict) -> int:
     previous Stop hook blocked it. Honouring it prevents an infinite loop that
     would burn credits.
     """
-    if payload.get("stop_hook_active"):
+    if payload.get("stop_hook_active") or payload.get("stopHookActive"):
         return 0
 
     state_file = state_path(workspace_key(payload))
@@ -311,20 +300,13 @@ def handle_stop(payload: dict) -> int:
     state["stop_blocked"] = True
     save_state(state_file, state)
 
-    emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "Stop",
-                "decision": "block",
-                "reason": clip(
-                    "No brain save was recorded for this session. Before finishing, "
-                    'append a summary entry with obsidian_brain: operation="append" '
-                    "(or quick_note) covering: context, what was accomplished, key "
-                    "findings, files changed, and next steps. This block fires once."
-                ),
-            }
-        }
-    )
+    reason = clip("No brain save was recorded for this session. Before finishing, " +
+                  'append a summary with obsidian_brain: operation="append" ' +
+                  "(or quick_note), covering findings, files changed and next steps. This block fires once.")
+    if os.environ.get("BRAIN_GUARD_COPILOT") == "1":
+        emit({"decision": "block", "reason": reason})
+    else:
+        emit({"hookSpecificOutput": {"hookEventName": "Stop", "decision": "block", "reason": reason}})
     return 0
 
 
