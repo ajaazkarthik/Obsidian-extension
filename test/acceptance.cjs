@@ -236,8 +236,8 @@ async function operations() {
   for(let i=0;i<23;i++)await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'activity '+i});assert.equal(fresh.saveCount,24);assert.equal(fresh.saveActivity.length,20);assert(fresh.saveActivity[0].endsWith('append Ops/rolling.md'));
   const log=await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8');const last=log.slice(log.lastIndexOf('## '));assert(last.includes('Save count: 24'));assert.equal(last.match(/^- /gm).length,20);assert(!/\/compact|tokens|context.*%/i.test(log));
   const append=fresh.filesystemBackend.appendFile.bind(fresh.filesystemBackend);fresh.filesystemBackend.appendFile=async(p,c)=>{if(p==='_Inbox/session-activity-log.md')throw Error('synthetic checkpoint failure');return append(p,c);};
-  const originalLog=console.log;let failures=0;console.log=(...args)=>{if(String(args[0]).includes('Could not persist activity checkpoint'))failures++;else originalLog(...args);};
-  try {for(let i=0;i<3;i++)assert((await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'still saved'})).includes('Successfully appended'));assert.equal(fresh.saveCount,27);assert.equal(failures,1);} finally {console.log=originalLog;fresh.filesystemBackend.appendFile=append;}
+  const originalLog=console.log;let failures=0;console.log=(...args)=>{if(String(args[0]).includes('Could not persist activity log'))failures++;else originalLog(...args);};
+  try {for(let i=0;i<3;i++)assert((await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'still saved'})).includes('Successfully appended'));assert.equal(fresh.saveCount,27);assert.equal(failures,3);} finally {console.log=originalLog;fresh.filesystemBackend.appendFile=append;}
  });
  await check('12-operation save reminder without context estimates or compact directives',async()=>{
   const fresh=new BrainTool({subscriptions:[]});instances.push(fresh);await fresh.initialize();
