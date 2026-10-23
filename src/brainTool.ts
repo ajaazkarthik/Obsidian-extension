@@ -94,17 +94,24 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
      */
     private async recordSave(operation: string, filepath: string): Promise<void> {
         this.saveCount++;
-        this.saveActivity.push(`${new Date().toISOString()} ${operation} ${filepath.replace(/[\r\n]/g, ' ')}`);
+        const activity = `${new Date().toISOString()} ${operation} ${filepath.replace(/[\r\n]/g, ' ')}`;
+        this.saveActivity.push(activity);
         this.saveActivity = this.saveActivity.slice(-20);
-        if (this.saveCount % 3 !== 0) return;
-        const checkpoint = `## ${new Date().toISOString()} — Checkpoint\n\nSave count: ${this.saveCount}\n\nRecent save activity (up to 20):\n${this.saveActivity.map(a => '- ' + a).join('\n')}\n`;
+
+        // A successful FIRST save must be visible to the hook immediately.
+        // The every-third summary remains unchanged and comes AFTER the line,
+        // preserving the original activity-section layout.
+        const checkpoint = this.saveCount % 3 === 0
+            ? `\n\n## ${new Date().toISOString()} — Checkpoint\n\nSave count: ${this.saveCount}\n\nRecent save activity (up to 20):\n${this.saveActivity.map(a => '- ' + a).join('\n')}\n`
+            : '';
         this.checkpointWrite = this.checkpointWrite.then(async () => {
             try {
                 const logPath = '_Inbox/session-activity-log.md';
-                await this.filesystemBackend.appendFile(logPath, checkpoint);
+                await this.filesystemBackend.appendFile(logPath, '- ' + activity + checkpoint);
                 await this.indexer.indexFileImmediately(logPath);
             } catch (error) {
-                console.log('[ObsidianBrain] Could not persist activity checkpoint:', error);
+                // Successful note writes remain successful if best-effort log I/O fails.
+                console.log('[ObsidianBrain] Could not persist activity log:', error);
             }
         });
         await this.checkpointWrite;
