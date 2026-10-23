@@ -177,6 +177,13 @@ export class FilesystemBackend {
         }
     }
 
+    /** Append a readable Markdown checkpoint without re-reading the entire log. */
+    async appendActivityCheckpoint(checkpoint: string): Promise<void> {
+        const filename = this.resolvePath('_Inbox/session-activity-log.md');
+        await fs.mkdir(path.dirname(filename), {recursive: true});
+        await fs.appendFile(filename, '\n' + checkpoint, {encoding: 'utf8'});
+    }
+
     /**
      * Ensure a directory exists (creates recursively if needed)
      */
