@@ -14,6 +14,8 @@ Module._load = function (request, ...rest) {
 const {BrainTool} = require('../../out/brainTool.js');
 const manifest = require('../../package.json');
 const description = manifest.contributes.languageModelTools[0];
+const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2024-11-05', '2025-03-26', '2025-06-18']);
+const LATEST_PROTOCOL_VERSION = '2025-06-18';
 const brain = new BrainTool({subscriptions: []});
 let started;
 const start = () => started ||= brain.initialize();
@@ -33,7 +35,8 @@ async function dispatch(message) {
             case 'initialize':
                 await start();
                 result = {
-                    protocolVersion: message.params?.protocolVersion || '2024-11-05',
+                    protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(message.params?.protocolVersion)
+                        ? message.params.protocolVersion : LATEST_PROTOCOL_VERSION,
                     capabilities: {tools: {}},
                     serverInfo: {name: 'obsidian-brain', version: manifest.version}
                 };
