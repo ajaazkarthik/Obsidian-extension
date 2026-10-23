@@ -462,7 +462,7 @@ async function hooks() {
   });
 
   await check('first quick_note unblocks Stop; zero-save session blocks once',async()=>{
-   const guard=(event,cwd)=>execFileSync('python3',[scriptPath,'--event',event],{
+   const guard=(event,cwd)=>execFileSync('python3',[path.join(context.extensionUri.fsPath,'assets','brain_guard.py'),'--event',event],{
     input:JSON.stringify({cwd}),encoding:'utf8',env:{...process.env,OBSIDIAN_BRAIN_VAULT:vault,BRAIN_GUARD_COPILOT:'1'}
    });
    const ws=await fs.mkdtemp(path.join(os.tmpdir(),'brain-hook-saved-'));
