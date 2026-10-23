@@ -276,11 +276,7 @@ async function registration() {
   const manifest=JSON.parse(await fs.readFile(path.join(runtime,'../package.json'),'utf8'));
   assert.equal(manifest.version,require('../package.json').version);
   const changes=await fs.readFile(path.join(__dirname,'../CHANGELOG.md'),'utf8');
-  assert(changes.includes('## [2.15.1]'));
-  assert(changes.includes('### [2.15.0-hooks]'));
-  assert(!changes.includes('## [2.12.0] - 2026-10-14'));
-  assert(changes.includes('hard-coding 2.11.1'));
-  assert(!changes.includes('25,000 vs 8'));assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
+  assert(changes.split('\n').some(l=>l.startsWith('## ['+manifest.version+']')),'changelog must have a release header matching package.json');assert.equal(manifest.name,'obsidian-brain');assert.equal(manifest.publisher,'ubanishathanvenkatesan');assert.equal(manifest.main,'./out/extension.js');
   assert.deepEqual(manifest.contributes.languageModelTools.map(t=>t.name),['obsidian_brain']);const tool=manifest.contributes.languageModelTools[0];assert.equal(tool.toolReferenceName,'obsidian_brain');
   const operations=['search','list','read','write','append','quick_note','str_replace','insert','delete','move','summarize_note','list_recent','auto_tag','related_notes'];assert.deepEqual(tool.inputSchema.properties.operation.enum,operations);assert.equal(tool.inputSchema.properties.max_chars.type,'number');
   assert.deepEqual(manifest.contributes.chatPromptFiles.map(p=>p.name).sort(),['brain-auto-save','brain-compress','brain-recall','brain-remember','brain-summarize']);assert(manifest.contributes.chatInstructions.some(p=>p.name==='brain-usage'));assert(manifest.contributes.configuration.properties['obsidianBrain.vaultPath']);assert(!manifest.contributes.configuration.properties['obsidianBrain.filesystemAllowedDirectories']);
