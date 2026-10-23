@@ -2,12 +2,12 @@
 """Brain-usage enforcement hook for VS Code agent sessions.
 
 Fires on SessionStart, PostToolUse, PreCompact and Stop. Reads the Obsidian
-brain activity log to decide whether the agent has saved anything during the
+private, unindexed save ledger to decide whether the agent has saved anything during the
 current session, then injects a reminder or blocks completion when it has not.
 
 Why this exists: the brain instruction is guidance only, so "search first,
 save as you go" is non-deterministic. This hook is the deterministic half --
-it observes the activity log the brain MCP server already writes and reacts.
+it observes .obsidian-brain/saves.log, not the indexed Markdown checkpoint.
 
 Contract: JSON on stdin, JSON on stdout. The hook never fails closed -- any
 parse or IO error exits 0 with no output, so a broken hook cannot wedge a
@@ -111,7 +111,8 @@ def vault_path() -> Path | None:
 
 
 def activity_log(vault: Path) -> Path:
-    return vault / "_Inbox" / "session-activity-log.md"
+    # Name retained for internal callers; the ledger is not Markdown or indexed.
+    return vault / ".obsidian-brain" / "saves.log"
 
 
 def parse_iso(ts: str) -> float | None:
@@ -161,7 +162,13 @@ def session_saves(vault: Path, state: dict) -> list[tuple[float, str]]:
     all_saves = recent_saves(vault)
     baseline = state.get("save_baseline_count")
     if isinstance(baseline, int) and baseline >= 0:
-        return all_saves[baseline:]
+        if len(all_saves) >= baseline:
+            return all_saves[baseline:]
+        # Rotation compacted the ledger from 2,001 to the latest 1,000
+        # records. Count-based offsets are no longer valid after compaction.
+        # Fall back to the session start timestamp with sub-ms tolerance.
+        since = float(state.get("session_start", 0))
+        return [item for item in all_saves if item[0] >= since - 0.001]
     return saves_since(vault, float(state.get("session_start", 0)))
 
 
@@ -354,7 +361,7 @@ def self_test() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         vault = Path(tmp)
-        (vault / "_Inbox").mkdir(parents=True)
+        (vault / ".obsidian-brain").mkdir(parents=True)
         log = activity_log(vault)
         log.write_text(
             "# Session Activity Log\n\n"
