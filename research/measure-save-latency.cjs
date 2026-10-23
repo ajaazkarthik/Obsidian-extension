@@ -63,10 +63,13 @@ async function run(legacy) {
         const checkpoints = (summary.match(/^## .* — Checkpoint$/gm)||[]).length;
         assert.equal(checkpoints,100,'every third save writes one summary');
         if (!legacy) {
-            const standalone = summary.split('\n').filter(l=>/^-\s+\d{4}-\d\d-\d\dT.* append Bench\//.test(l));
-            // Historical entries inside each checkpoint's "Recent save activity"
-            // remain intended; standalone lines outside checkpoints must not exist.
-            assert.equal(standalone.length,1970,'100 rolling windows: 1+2+3+... capped at 20');
+            let inActivityList = false, standalone = 0;
+            for (const line of summary.split('\n')) {
+                if (line.startsWith('## ')) inActivityList = false;
+                if (line.startsWith('Recent save activity (up to 20):')) inActivityList = true;
+                if (!inActivityList && /^-\s+\d{4}-\d\d-\d\dT.* append Bench\//.test(line)) standalone++;
+            }
+            assert.equal(standalone,0,'summary must contain no standalone per-save rows');
         }
         if (!legacy) {
             const ledger=(await fs.readFile(path.join(vault,'.obsidian-brain/saves.log'),'utf8')).trim().split('\n');
