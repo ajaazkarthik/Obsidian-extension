@@ -6,7 +6,11 @@ All notable changes to the "obsidian-brain" extension will be documented in this
 
 - Moved per-save tracking from the indexed Markdown activity log to the hidden, unindexed `.obsidian-brain/saves.log`, using a native append and rotation after 2,000 lines (retaining the newest 1,000). The guard reads only the private ledger, including sessions that cross a rotation.
 - Restored `_Inbox/session-activity-log.md` to an every-third-save checkpoint summary, indexed only on checkpoints and excluded from general search results. Cleans up legacy 2.15.1 standalone save lines on its first new checkpoint without removing existing checkpoint histories.
-- Acceptance covers hidden log, bounded rotation, first-save/zero-save hook behaviour and search isolation; the real 300-append benchmark compares 2.15.1 versus 2.15.2 on an identical 50-note corpus. CI timing results appear below once verified.
+- Acceptance covers the hidden log, bounded rotation, legacy-log migration, first-save/zero-save hook behaviour, and search isolation. **Measured GitHub Actions 300-append benchmark** (identical 50-note corpus, 2026-10-23; medians over first vs last 50 appends):
+  - Linux: reproduced 2.15.1 **1.883 → 6.533 ms**; 2.15.2 **0.829 → 1.176 ms** (**1.419×**, under the 1.5× limit). Total time for 300 appends: **1375.033 → 604.085 ms**.
+  - macOS: reproduced 2.15.1 **1.424 → 5.984 ms**; 2.15.2 **0.755 → 0.983 ms** (**1.301×**). Total: **1260.039 → 477.097 ms**.
+  - Windows: reproduced 2.15.1 **3.576 → 11.709 ms**; 2.15.2 **2.032 → 2.916 ms** (**1.435×**). Total: **2348.781 → 1156.635 ms**.
+  - These results execute actual compiled BrainTool append/index flows; the old recordSave routine is reconstructed from 2.15.1. Timings are environment-dependent and not production-vault latency guarantees.
 - Corrected historical folded hook entry to reflect 2.15.1's explicit opt-in installation; removed assertions pinning changelog prose.
 - MCP initializes with the client's version only for supported versions 2024-11-05, 2025-03-26 and 2025-06-18; unsupported versions negotiate to the latest supported 2025-06-18. Added coverage for both cases.
 - No DLP features added.
