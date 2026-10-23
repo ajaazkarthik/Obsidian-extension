@@ -15,6 +15,8 @@ const {BrainTool} = require('../../out/brainTool.js');
 const manifest = require('../../package.json');
 const description = manifest.contributes.languageModelTools[0];
 const brain = new BrainTool({subscriptions: []});
+let started;
+const start = () => started ||= brain.initialize();
 const write = response => process.stdout.write(JSON.stringify(response) + '\n');
 const error = (code, message) => ({code, message});
 
@@ -29,8 +31,9 @@ async function dispatch(message) {
         let result;
         switch (message.method) {
             case 'initialize':
+                await start();
                 result = {
-                    protocolVersion: '2024-11-05',
+                    protocolVersion: message.params?.protocolVersion || '2024-11-05',
                     capabilities: {tools: {}},
                     serverInfo: {name: 'obsidian-brain', version: manifest.version}
                 };
@@ -54,6 +57,10 @@ async function dispatch(message) {
                 if (!process.env.OBSIDIAN_VAULT_PATH) {
                     throw new Error('Set OBSIDIAN_VAULT_PATH to an existing disposable or user-selected vault.');
                 }
+                try { await start(); } catch (cause) {
+                    result = {content:[{type:'text',text:cause instanceof Error ? cause.message : String(cause)}],isError:true};
+                    break;
+                }
                 const output = await brain.invoke({input: params.arguments}, {});
                 const content = output.content.map(item => ({type: 'text', text: String(item.value)}));
                 result = {content, isError: content.some(item => item.text.includes('❌ Error:'))};
@@ -65,6 +72,9 @@ async function dispatch(message) {
         return {jsonrpc: '2.0', id, result};
     } catch (cause) {
         console.error('[obsidian-brain MCP]', cause);
+        if (message.method === 'tools/call') {
+            return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:cause instanceof Error ? cause.message : String(cause)}],isError:true}};
+        }
         return {jsonrpc: '2.0', id, error: error(-32603, cause instanceof Error ? cause.message : String(cause))};
     }
 }

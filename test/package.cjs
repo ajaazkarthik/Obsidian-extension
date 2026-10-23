@@ -43,6 +43,7 @@ async function extract(archive,directory) {
   execFileSync(process.execPath,[path.join(__dirname,'acceptance.cjs')],{cwd,stdio:'inherit',env:{...process.env,BRAIN_RUNTIME:path.join(temp,'extension/out')}});
   console.log('PASS packaged runtime acceptance suite');
   execFileSync(process.execPath,[path.join(__dirname,'mcp.cjs')],{cwd,stdio:'inherit',env:{...process.env,BRAIN_RUNTIME:path.join(temp,'extension/out'),BRAIN_MCP_SERVER:path.join(temp,'extension/server/dist/index.js')}});
-  console.log('PASS packaged MCP runtime; extracted fixtures cleaned');
+  execFileSync(process.execPath,[path.join(__dirname,'mcp-failure.cjs')],{cwd,stdio:'inherit',env:{...process.env,BRAIN_MCP_SERVER:path.join(temp,'extension/server/dist/index.js')}});
+  console.log('PASS packaged MCP runtime and failure handling; extracted fixtures cleaned');
  } finally {await fs.rm(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

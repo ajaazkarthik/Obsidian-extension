@@ -6,6 +6,8 @@ const {pack} = require('@vscode/vsce/out/package');
  const cwd=path.resolve(__dirname,'..');
  execFileSync(process.execPath,[require.resolve('typescript/bin/tsc'),'-p',cwd],{cwd,stdio:'inherit'});
  execFileSync(process.execPath,['test/acceptance.cjs'],{cwd,stdio:'inherit'});
+ execFileSync(process.execPath,['test/mcp.cjs'],{cwd,stdio:'inherit'});
+ execFileSync(process.execPath,['test/mcp-failure.cjs'],{cwd,stdio:'inherit'});
  const packagePath=path.join(cwd,'releases/obsidian-brain-'+require('../package.json').version+'.vsix');
  await fs.mkdir(path.dirname(packagePath),{recursive:true});
  // Run vsce's pack step directly: compile/test already ran using this Node runtime.

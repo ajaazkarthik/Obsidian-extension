@@ -2,21 +2,32 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.15.1] - 2026-10-23
+
+- Corrected MCP smoke-test failure paths: missing server, early exit, spawn error and timeout reject pending work, emit diagnostic stderr and exit nonzero. Tested against a missing script and deliberately silent process.
+- Brain saves now append a timestamped per-save record immediately, while preserving every-third-save checkpoint summaries; compiled BrainTool -> Python Stop-hook acceptance verifies a first quick note unblocks and a no-save session blocks once.
+- Hook installation now defaults to **off** with one-time opt-in notice and non-destructive cleanup of old managed configuration. Python availability is checked. Copilot user path verified against VS Code documentation; event names and fields converted to the current Copilot v1 hook schema. Workspace collision detection is event-based. Removed PROGRESS.md instruction.
+- MCP initializes BrainTool during initialize, echoes supported protocol version and returns tool execution failures as MCP content with `isError: true`.
+- Replaced synthetic vocabulary-loop benchmark with actual compiled `VaultIndexer.removeFileImmediately` runs on the same 1,000-note disposable vault, comparing the 2.15.0 implementation against the prior full-vocabulary loop. Values are logged by CI and are not production-vault estimates.
+- Corrected historical changelog labels and retained all existing acceptance coverage. No DLP features added.
+- **Measured real-indexer CI benchmark (2026-10-23):** 1,000 identical disposable notes per implementation; 10 warmup removals, then 100 timed `removeFileImmediately` calls. Linux previous **23.84 ms** vs reverse-map **1.34 ms** (17.85x); macOS **24.76 ms** vs **0.74 ms** (33.30x); Windows **15.07 ms** vs **1.12 ms** (13.47x). The baseline reproduces the previous 2.15.0 word-index scan inside a real VaultIndexer instance; timings are environment-dependent and not claims about a production vault.
+
 ## [2.15.0] - 2026-10-23
 
 - **Claude Code MCP:** Added zero-dependency `server/dist/index.js` and a local VS Code API shim. JSON-RPC 2.0 stdio supports initialize, tools/list, tools/call and notifications. Schema is read from `package.json`; vault from `OBSIDIAN_VAULT_PATH`; stdout remains protocol-only. A disposable-vault child-process test checks handshake and successful search and write (previously no MCP transport).
 - **Repository hygiene:** Generated `node_modules/`, `out/` and VSIX releases are ignored and no longer tracked; Windows/macOS/Linux CI compiles before package verification. The obsolete `git diff --exit-code -- out` gate was removed because `out/` is now deliberately generated.
-- **Single version source:** Manifest is 2.15.0; packaging scripts and registration acceptance read the version from `package.json` rather than hard-coding 2.12.0. Versions 2.12–2.14 are not introduced by this change.
+- **Single version source:** Manifest is 2.15.0; packaging scripts and registration acceptance read the version from `package.json` rather than hard-coding 2.11.1. Versions 2.12–2.14 are not introduced by this change.
 - **Archive consistency:** `insert`, `write`, and `str_replace` archive superseded content when different. Archive retention changes from unbounded to **at most 5** copies per source note; removed copies are pruned from disk and index. Identical content creates **0** new archives.
-- **Index removal complexity:** Reverse per-file term sets reduce removed-file posting-list visits from total vocabulary size (N) to that file's distinct terms (k), while preserving CACHE_VERSION=3, cache round-trip and ranking. The repeatable algorithm benchmark in `research/measure-index-removal.cjs` compares **25,000 vs 8** visits per removal (**3,125× fewer posting-list visits**). Measured across 200 iterations in GitHub Actions (before full scan → after reverse lookup): Linux **50.58 → 0.19 ms**, macOS **65.85 → 0.39 ms**, Windows **63.48 → 0.17 ms**. These are synthetic algorithm-level measurements, not production-vault latency estimates.
+- **Index removal complexity:** Reverse per-file term sets reduce removed-file posting-list visits from total vocabulary size (N) to that file's distinct terms (k), while preserving CACHE_VERSION=3, cache round-trip and ranking. The earlier 25,000-term standalone benchmark was a synthetic demonstration and is superseded by the real VaultIndexer benchmark in 2.15.1.
 - **Docs and cross-platform testing:** README adds MCP setup; acceptance covers bounded archives and reverse postings, MCP smoke-tests real JSON-RPC stdio; packaging checks include the adapter. No DLP features added.
 
-## [2.12.0] - 2026-10-14
+### [2.15.0-hooks] - folded into 2.15.0
 
 - **Portable brain-usage enforcement.** The extension now installs the `brain_guard` hook, its hook config and the brain-first-workflow instruction into the user-level Copilot folders (`~/.copilot/hooks`, `~/.copilot/instructions`) at activation. Enforcement therefore travels with the extension to every workspace and every machine — no per-repository setup.
 - The hook fires on `SessionStart`, `PostToolUse`, `PreCompact` and `Stop`: it injects the protocol at session start, reminds the agent when 5 tool calls pass with no brain save, and blocks completion once per session when nothing was saved.
 - Installation is idempotent and non-destructive: every generated file carries an `obsidian-brain-managed` marker, and a file without that marker is treated as user-authored and never overwritten. Failures are logged and never block activation.
 - Added `obsidianBrain.installAgentHooks` (default `true`) to opt out.
+
 
 ## [2.11.1] - 2026-10-13
 

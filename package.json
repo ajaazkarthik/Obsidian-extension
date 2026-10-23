@@ -3,7 +3,7 @@
   "publisher": "ubanishathanvenkatesan",
   "displayName": "Obsidian Brain - Global Agent Memory",
   "description": "Global AI agent knowledge persistence using an Obsidian vault, with indexed search, related notes and factual save checkpoints.",
-  "version": "2.15.0",
+  "version": "2.15.1",
   "license": "MIT",
   "engines": {
     "vscode": "^1.95.0"
@@ -63,8 +63,8 @@
         },
         "obsidianBrain.installAgentHooks": {
           "type": "boolean",
-          "default": true,
-          "description": "Install the brain-usage enforcement hook into the user-level Copilot folders (~/.copilot/hooks and ~/.copilot/instructions) so the brain search/save cadence is enforced in every workspace. Files you authored yourself are never overwritten.",
+          "default": false,
+          "description": "Opt in to installing executable agent hooks in the documented Copilot user hook folder. Disabled by default; user-owned files are never overwritten.",
           "scope": "machine-overridable"
         }
       }
@@ -202,7 +202,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "node scripts/package.cjs",
-    "test": "node test/acceptance.cjs && node test/mcp.cjs"
+    "test": "node test/acceptance.cjs && node test/mcp.cjs && node test/mcp-failure.cjs"
   },
   "devDependencies": {
     "@types/node": "^22",
