@@ -1,15 +1,16 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 /**
- * Installs the brain-usage enforcement hook into the user-level Copilot
- * customization folders (`~/.copilot/hooks`, `~/.copilot/instructions`).
+ * Optionally installs hooks in the documented Copilot user customization
+ * directory (~/.copilot/hooks or COPILOT_HOME/hooks). No install without opt-in.
  *
  * Why the extension writes these files instead of shipping them declaratively:
  * VS Code has no `contributes.hooks` contribution point, so an extension cannot
- * declare hooks in `package.json`. Writing them at activation is the only way to
- * make enforcement travel with the extension to every workspace and machine.
+ * declare hooks in `package.json`. Opt-in installation is used instead of
+ * activating executable hook scripts automatically.
  *
  * Every file this module owns carries MANAGED_MARKER. A file without the marker
  * is treated as user-authored and is never overwritten.
@@ -21,7 +22,10 @@ const HOOK_CONFIG_NAME = 'obsidian-brain.json';
 const GUARD_SCRIPT_NAME = 'brain_guard.py';
 const INSTRUCTION_NAME = 'brain-first-workflow.instructions.md';
 
-const HOOK_EVENTS = ['SessionStart', 'PostToolUse', 'PreCompact', 'Stop'] as const;
+const HOOK_EVENTS: Record<string, string> = {
+    sessionStart: 'SessionStart', postToolUse: 'PostToolUse',
+    preCompact: 'PreCompact', agentStop: 'Stop'
+};
 
 export interface InstallReport {
     installed: boolean;
@@ -35,10 +39,11 @@ export interface InstallReport {
 export interface InstallOptions {
     homeDir?: string;
     vaultPath?: string;
+    pythonCommand?: string; // explicit executable override for testability
 }
 
 export function copilotHooksDir(homeDir: string): string {
-    return path.join(homeDir, '.copilot', 'hooks');
+    return path.join(process.env.COPILOT_HOME || path.join(homeDir, '.copilot'), 'hooks');
 }
 
 export function copilotInstructionsDir(homeDir: string): string {
@@ -64,27 +69,20 @@ function quote(value: string, platform: NodeJS.Platform): string {
     return platform === 'win32' ? `"${value}"` : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function buildHookConfig(scriptPath: string, vaultPath?: string): Record<string, unknown> {
-    // `command` is the cross-platform fallback used on macOS/Linux, so it is
-    // always POSIX-quoted; `windows` overrides it on Windows.
-    const posix = quote(scriptPath, 'linux');
-    const windows = quote(scriptPath, 'win32');
-    const env = vaultPath ? { OBSIDIAN_BRAIN_VAULT: vaultPath } : undefined;
-
+export function buildHookConfig(scriptPath: string, vaultPath?: string, platform: NodeJS.Platform = process.platform, pythonCommand?: string): Record<string, unknown> {
+    const interpreter = pythonCommand || (platform === 'win32' ? 'python' : 'python3');
+    const command = interpreter + ' ' + quote(scriptPath, platform);
+    const env = { BRAIN_GUARD_COPILOT: '1', ...(vaultPath ? {OBSIDIAN_BRAIN_VAULT: vaultPath} : {}) };
     const hooks: Record<string, unknown[]> = {};
-    for (const event of HOOK_EVENTS) {
-        hooks[event] = [
-            {
-                type: 'command',
-                command: `python3 ${posix} --event ${event}`,
-                windows: `python ${windows} --event ${event}`,
-                ...(env ? { env } : {}),
-                timeout: 10,
-            },
-        ];
+    for (const [event, legacyEvent] of Object.entries(HOOK_EVENTS)) {
+        hooks[event] = [{
+            type: 'command',
+            command: command + ' --event ' + legacyEvent,
+            env,
+            timeoutSec: 10,
+        }];
     }
-
-    return { $managedBy: MANAGED_MARKER, hooks };
+    return { version: 1, $managedBy: MANAGED_MARKER, hooks };
 }
 
 async function readTextIfPresent(uri: vscode.Uri): Promise<string | undefined> {
@@ -127,7 +125,13 @@ async function workspaceAlreadyGuards(): Promise<boolean> {
         for (const [name, type] of entries) {
             if (type !== vscode.FileType.File || !name.endsWith('.json')) continue;
             const content = await readTextIfPresent(vscode.Uri.joinPath(hooksDir, name));
-            if (content?.includes(GUARD_SCRIPT_NAME)) return true;
+            if (!content) continue;
+            try {
+                const config = JSON.parse(content);
+                const events = Object.keys(config?.hooks || {});
+                // Any workspace stop hook might overlap or conflict with ours.
+                if (events.some(event => ['agentStop', 'Stop'].includes(event))) return true;
+            } catch { /* Ignore invalid workspace hook configs. */ }
         }
     }
     return false;
@@ -144,8 +148,18 @@ export async function installAgentHooks(context: vscode.ExtensionContext, option
     const report: InstallReport = { installed: false, hooksDir, written: [], skipped: [], removed: [] };
 
     const enabled = vscode.workspace.getConfiguration('obsidianBrain').get<boolean>('installAgentHooks');
-    if (enabled === false) {
-        report.reason = 'disabled by obsidianBrain.installAgentHooks';
+    if (enabled !== true) {
+        // A pre-2.15.1 install could still execute on startup even when the new
+        // default is false; disable ONLY a marker-owned user config.
+        const staleConfig = vscode.Uri.file(path.join(hooksDir, HOOK_CONFIG_NAME));
+        try {
+            const previous = await readTextIfPresent(staleConfig);
+            if (previous !== undefined && isManaged(previous)) {
+                await vscode.workspace.fs.delete(staleConfig);
+                report.removed.push(staleConfig.fsPath);
+            }
+        } catch { /* Fail open, never affect extension activation. */ }
+        report.reason = 'disabled by obsidianBrain.installAgentHooks (opt-in)';
         return report;
     }
 
@@ -155,6 +169,12 @@ export async function installAgentHooks(context: vscode.ExtensionContext, option
     }
 
     try {
+        const python = options.pythonCommand || (process.platform === 'win32' ? 'python' : 'python3');
+        const probe = spawnSync(python, ['--version'], {timeout: 2000, encoding: 'utf8', windowsHide: true});
+        if (probe.error || probe.status !== 0) {
+            report.reason = 'Python interpreter unavailable: ' + python;
+            return report;
+        }
         const scriptPath = path.join(hooksDir, 'scripts', GUARD_SCRIPT_NAME);
         const scriptUri = vscode.Uri.file(scriptPath);
         const existingScript = await readTextIfPresent(scriptUri);
@@ -183,7 +203,7 @@ export async function installAgentHooks(context: vscode.ExtensionContext, option
                 report.skipped.push(configPath);
             }
         } else {
-            const config = JSON.stringify(buildHookConfig(scriptPath, options.vaultPath), null, 2) + '\n';
+            const config = JSON.stringify(buildHookConfig(scriptPath, options.vaultPath, process.platform, python), null, 2) + '\n';
             if (existingConfig !== config) {
                 await writeText(configUri, config);
                 report.written.push(configPath);
