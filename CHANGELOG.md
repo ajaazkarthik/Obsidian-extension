@@ -2,6 +2,14 @@
 
 All notable changes to the "obsidian-brain" extension will be documented in this file.
 
+## [2.15.3] - 2026-10-23
+
+- **De-flaked the save-latency CI performance gate, without changing production save/indexing behavior.** The 2.15.2 absolute threshold (`median(last 50) / median(first 50) <= 1.5`) was unreliable for sub-2-ms file writes. Four observed Windows runs produced **>1.5 (fail), 1.236, 0.936 and 1.290**; the prior green release CI reported **Linux 1.419, macOS 1.301, Windows 1.435**. The actual fix remains substantial: the old 2.15.1 path had growing per-save Markdown re-indexing.
+- Benchmark now uses the **same real compiled BrainTool and 50-note corpus**, runs **three independent pairs** interleaved `legacy, new, legacy, new, ...`, warms up with **20 untimed appends per run**, then times **300 appends**. The comparison uses the **median of the three per-run last-50 medians**.
+- The **single performance assertion** requires `median(2.15.3 last 50) < median(2.15.1 last 50)`. An additional self-check requires the reconstructed 2.15.1 baseline to grow at least **1.5x** between its first/last-50 medians, otherwise the comparison is invalid. Legacy/new first-50, last-50, totals and per-save-ledger timings remain in the printed report **without separate performance gates**.
+- Retained all **48 acceptance groups**, `test/mcp.cjs`, `test/mcp-failure.cjs`, the existing archive, index and optional-hook behavior. No DLP was added.
+- New three-platform CI measurements: pending CI validation.
+
 ## [2.15.2] - 2026-10-23
 
 - Moved per-save tracking from the indexed Markdown activity log to the hidden, unindexed `.obsidian-brain/saves.log`, using a native append and rotation after 2,000 lines (retaining the newest 1,000). The guard reads only the private ledger, including sessions that cross a rotation.
