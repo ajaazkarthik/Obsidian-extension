@@ -24,7 +24,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         if (report.reason?.includes('opt-in') && context.globalState &&
             !context.globalState.get<boolean>('brainHooksOptInNoticeShown', false)) {
-            void context.globalState.update('brainHooksOptInNoticeShown', true).then(async () => {
+            void Promise.resolve(context.globalState.update('brainHooksOptInNoticeShown', true)).then(async () => {
                 const selection = await vscode.window.showInformationMessage(
                     'Obsidian Brain hooks are off by default. Enable them only if you want agent lifecycle enforcement.',
                     'Enable Hooks'
