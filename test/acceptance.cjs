@@ -235,9 +235,9 @@ async function operations() {
   await invoke(fresh,'write',{filepath:'Ops/rolling.md',content:'rollingmarker'});await invoke(fresh,'str_replace',{filepath:'Ops/rolling.md',old_str:'missing',new_str:'x'});assert.equal(fresh.saveCount,1);
   for(let i=0;i<23;i++)await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'activity '+i});assert.equal(fresh.saveCount,24);assert.equal(fresh.saveActivity.length,20);assert(fresh.saveActivity[0].endsWith('append Ops/rolling.md'));
   const log=await fs.readFile(path.join(vault,'_Inbox/session-activity-log.md'),'utf8');const last=log.slice(log.lastIndexOf('## '));assert(last.includes('Save count: 24'));assert.equal(last.match(/^- /gm).length,20);assert(!/\/compact|tokens|context.*%/i.test(log));
-  const append=fresh.filesystemBackend.appendFile.bind(fresh.filesystemBackend);fresh.filesystemBackend.appendFile=async(p,c)=>{if(p==='_Inbox/session-activity-log.md')throw Error('synthetic checkpoint failure');return append(p,c);};
+  const append=fresh.filesystemBackend.appendActivityCheckpoint.bind(fresh.filesystemBackend);fresh.filesystemBackend.appendActivityCheckpoint=async()=>{throw Error('synthetic checkpoint failure');};
   const originalLog=console.log;let failures=0;console.log=(...args)=>{if(String(args[0]).includes('Could not persist activity checkpoint'))failures++;else originalLog(...args);};
-  try {for(let i=0;i<3;i++)assert((await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'still saved'})).includes('Successfully appended'));assert.equal(fresh.saveCount,27);assert.equal(failures,1);} finally {console.log=originalLog;fresh.filesystemBackend.appendFile=append;}
+  try {for(let i=0;i<3;i++)assert((await invoke(fresh,'append',{filepath:'Ops/rolling.md',content:'still saved'})).includes('Successfully appended'));assert.equal(fresh.saveCount,27);assert.equal(failures,1);} finally {console.log=originalLog;fresh.filesystemBackend.appendActivityCheckpoint=append;}
  });
  await check('hidden private save ledger, checkpoint summaries, no search result contamination',async()=>{
   const brain=new BrainTool({subscriptions:[]});instances.push(brain);await brain.initialize();
