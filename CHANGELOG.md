@@ -10,6 +10,7 @@ All notable changes to the "obsidian-brain" extension will be documented in this
 - MCP initializes BrainTool during initialize, echoes supported protocol version and returns tool execution failures as MCP content with `isError: true`.
 - Replaced synthetic vocabulary-loop benchmark with actual compiled `VaultIndexer.removeFileImmediately` runs on the same 1,000-note disposable vault, comparing the 2.15.0 implementation against the prior full-vocabulary loop. Values are logged by CI and are not production-vault estimates.
 - Corrected historical changelog labels and retained all existing acceptance coverage. No DLP features added.
+- **Measured real-indexer CI benchmark (2026-10-23):** 1,000 identical disposable notes per implementation; 10 warmup removals, then 100 timed `removeFileImmediately` calls. Linux previous **23.84 ms** vs reverse-map **1.34 ms** (17.85x); macOS **24.76 ms** vs **0.74 ms** (33.30x); Windows **15.07 ms** vs **1.12 ms** (13.47x). The baseline reproduces the previous 2.15.0 word-index scan inside a real VaultIndexer instance; timings are environment-dependent and not claims about a production vault.
 
 ## [2.15.0] - 2026-10-23
 
