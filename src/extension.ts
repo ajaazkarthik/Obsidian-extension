@@ -14,15 +14,29 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.lm.registerTool('obsidian_brain', brainTool), brainTool);
     console.log('[ObsidianBrain] Registered obsidian_brain tool');
 
-    // Install the brain-usage enforcement hook into the user-level Copilot
-    // folders so it travels with the extension to every workspace and machine.
+    // Hooks execute arbitrary code; the 2.15.1 default is explicitly opt-in.
+    // The disabled path also retires any obsolete managed user hook config.
     void installAgentHooks(context, { vaultPath: safeVaultPath() }).then(report => {
         if (report.installed) {
-            console.log(`[ObsidianBrain] Agent hooks ready in ${report.hooksDir} (${report.written.length} written, ${report.skipped.length} user-owned)`);
-        } else {
-            console.log(`[ObsidianBrain] Agent hooks not installed: ${report.reason}`);
+            console.log(`[ObsidianBrain] Agent hooks ready in ${report.hooksDir}`);
+        } else if (report.reason?.startsWith('Python interpreter unavailable')) {
+            console.warn('[ObsidianBrain] Skipping hook installation:', report.reason);
         }
-    });
+        if (report.reason?.includes('opt-in') && context.globalState &&
+            !context.globalState.get<boolean>('brainHooksOptInNoticeShown', false)) {
+            void context.globalState.update('brainHooksOptInNoticeShown', true).then(async () => {
+                const selection = await vscode.window.showInformationMessage(
+                    'Obsidian Brain hooks are off by default. Enable them only if you want agent lifecycle enforcement.',
+                    'Enable Hooks'
+                );
+                if (selection === 'Enable Hooks') {
+                    await vscode.workspace.getConfiguration('obsidianBrain').update('installAgentHooks', true, vscode.ConfigurationTarget.Global);
+                    const enabled = await installAgentHooks(context, {vaultPath: safeVaultPath()});
+                    if (!enabled.installed) vscode.window.showWarningMessage(enabled.reason || 'Hook setup was skipped.');
+                }
+            }).catch(error => console.warn('[ObsidianBrain] Hook opt-in notice:', error));
+        }
+    }).catch(error => console.warn('[ObsidianBrain] Hook setup skipped:', error));
     
     // Initialize the brain indexer in background (don't block activation)
     brainTool.initialize().then(() => {
