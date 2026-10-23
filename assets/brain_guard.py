@@ -154,6 +154,17 @@ def saves_since(vault: Path, since: float) -> list[tuple[float, str]]:
     return [item for item in recent_saves(vault) if item[0] >= since - CLOCK_SKEW_GRACE]
 
 
+def session_saves(vault: Path, state: dict) -> list[tuple[float, str]]:
+    """Count log records added after SessionStart, excluding saves from a prior
+    session even when both sessions began within the clock-skew grace period.
+    """
+    all_saves = recent_saves(vault)
+    baseline = state.get("save_baseline_count")
+    if isinstance(baseline, int) and baseline >= 0:
+        return all_saves[baseline:]
+    return saves_since(vault, float(state.get("session_start", 0)))
+
+
 # --------------------------------------------------------------------------
 # Session state
 # --------------------------------------------------------------------------
@@ -194,6 +205,7 @@ def handle_session_start(payload: dict) -> int:
         state_file,
         {
             "session_start": time.time(),
+            "save_baseline_count": len(recent_saves(vault_path())) if vault_path() else 0,
             "tool_calls": 0,
             "reminders": 0,
             "stop_blocked": False,
@@ -213,6 +225,7 @@ def handle_post_tool_use(payload: dict) -> int:
         # No SessionStart marker (hook added mid-session) -- start counting now.
         state = {
             "session_start": time.time(),
+            "save_baseline_count": len(recent_saves(vault_path())) if vault_path() else 0,
             "tool_calls": 0,
             "reminders": 0,
             "stop_blocked": False,
@@ -230,7 +243,7 @@ def handle_post_tool_use(payload: dict) -> int:
         return 0
 
     since = float(state.get("session_start", 0))
-    saves = saves_since(vault, since)
+    saves = session_saves(vault, state)
     if saves:
         return 0
 
@@ -254,7 +267,7 @@ def handle_pre_compact(payload: dict) -> int:
 
     saved_note = ""
     if vault is not None and state:
-        saves = saves_since(vault, float(state.get("session_start", 0)))
+        saves = session_saves(vault, state)
         saved_note = f" Brain saves this session: {len(saves)}."
 
     if os.environ.get('BRAIN_GUARD_COPILOT') == '1':
@@ -293,7 +306,7 @@ def handle_stop(payload: dict) -> int:
     if vault is None:
         return 0
 
-    saves = saves_since(vault, float(state.get("session_start", 0)))
+    saves = session_saves(vault, state)
     if saves:
         return 0
 
