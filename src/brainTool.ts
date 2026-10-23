@@ -120,12 +120,22 @@ export class BrainTool implements vscode.LanguageModelTool<BrainToolInput> {
                         this.migratedLegacyLog = true;
                         try {
                             const old = await this.filesystemBackend.readFile(logPath);
-                            let insideActivityList = false;
+                            let inList = false;
+                            let listCount = 0;
+                            let expected = 0;
                             const clean = old.split('\n').filter(line => {
-                                if (line.startsWith('## ')) insideActivityList = false;
-                                if (line.startsWith('Recent save activity (up to 20):')) insideActivityList = true;
-                                return insideActivityList ||
-                                    !/^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+(?:write|append|quick_note|str_replace|insert)\s+/.test(line);
+                                if (line.startsWith('## ')) { inList = false; expected = 0; }
+                                const count = /^Save count: (\d+)$/.exec(line);
+                                if (count) expected = Math.min(20, Number(count[1]));
+                                if (line.startsWith('Recent save activity (up to 20):')) {
+                                    inList = true;
+                                    listCount = 0;
+                                }
+                                if (/^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+(?:write|append|quick_note|str_replace|insert)\s+/.test(line)) {
+                                    if (inList && listCount < expected) { listCount++; return true; }
+                                    return false;
+                                }
+                                return true;
                             }).join('\n');
                             if (old !== clean) await this.filesystemBackend.writeFile(logPath, clean);
                         } catch (error) {
